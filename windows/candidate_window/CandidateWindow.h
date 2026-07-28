@@ -68,6 +68,10 @@ private:
 
     static bool IsDarkMode();
 
+    // 获取当前窗口所在显示器的 DPI 缩放因子（1.0 = 96 DPI）
+    // 用于在高 DPI 显示器（4K/Retina）上等比放大字体与间距。
+    float GetDpiScale() const;
+
     // 中英文提示自动隐藏定时器 ID
     enum { kToastTimerId = 1 };
 };

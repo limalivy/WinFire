@@ -32,6 +32,35 @@ static Color ToColor(const fire::ColorData& c) {
     return Color(to8(c.opacity), to8(c.red), to8(c.green), to8(c.blue));
 }
 
+// 计算候选词的编码提示文本，对应 Swift CandidatesView.swift getShownCode。
+// 规则：
+//   - 拼音候选 或 code 不是以 origin 开头：显示 (code)
+//   - code 比 origin 长：显示后缀（不含 ~ 前缀）
+//   - 否则：空串（不显示）
+// 反查模式下候选 code 是五笔码、origin 是 `拼音，不以 origin 开头，会显示 (code)。
+static std::string GetShownCode(const fire::Candidate& cand, const std::string& origin) {
+    if (cand.type == fire::CandidateType::Py ||
+        cand.code.size() < origin.size() ||
+        cand.code.compare(0, origin.size(), origin) != 0) {
+        return "(" + cand.code + ")";
+    }
+    if (cand.code.size() > origin.size()) {
+        return cand.code.substr(origin.size());
+    }
+    return std::string();
+}
+
+// 是否应当显示编码提示：
+//   - wubi_code_tip 开关开启（用户设置），或
+//   - 反查模式（z_key_query 开启且 original 以 ` 开头）强制显示，不受开关控制。
+// 与 InputEngine::is_reverse_lookup_mode 判定一致（反查仅发生在 ZhHans 模式下，
+// 候选窗只在 ZhHans 下收到此类视图，故无需再判 input_mode）。
+static bool ShouldShowCode(const fire::Config& config, const std::string& original) {
+    bool reverseLookup = config.z_key_query &&
+                         !original.empty() && original[0] == '`';
+    return config.wubi_code_tip || reverseLookup;
+}
+
 CandidateWindowController::CandidateWindowController(const fire::Config& config)
     : config_(config) {}
 
@@ -50,6 +79,30 @@ bool CandidateWindowController::IsDarkMode() {
         RegCloseKey(hKey);
     }
     return value == 0;
+}
+
+float CandidateWindowController::GetDpiScale() const {
+    // GetDpiForWindow 需 Windows 10 1607+。动态绑定避免在老系统上加载失败。
+    // DPI=96 时缩放因子为 1.0；150% 缩放 DPI=144，缩放因子 1.5；200% 缩放 DPI=192，缩放因子 2.0。
+    if (!hwnd_) return 1.0f;
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        typedef UINT (WINAPI *PFN_GetDpiForWindow)(HWND);
+        auto pfn = reinterpret_cast<PFN_GetDpiForWindow>(
+            GetProcAddress(user32, "GetDpiForWindow"));
+        if (pfn) {
+            UINT dpi = pfn(hwnd_);
+            if (dpi > 0) return dpi / 96.0f;
+        }
+    }
+    // 回退：按系统 DPI（SystemDpi）估算，兼顾无 GetDpiForWindow 的旧系统。
+    HDC hdc = GetDC(nullptr);
+    if (hdc) {
+        int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+        ReleaseDC(nullptr, hdc);
+        if (dpi > 0) return dpi / 96.0f;
+    }
+    return 1.0f;
 }
 
 bool CandidateWindowController::Create(HINSTANCE hInst) {
@@ -157,6 +210,8 @@ SIZE CandidateWindowController::Measure() {
     FIRE_LOG_ENTER();
     // 用一个临时 DC + GDI+ 测量文本尺寸。此处给出布局公式，具体像素以实际字体度量为准。
     const auto& ap = config_.theme.appearance(darkMode_);
+    const float dpi = GetDpiScale();  // 高 DPI 显示器等比放大
+    FIRE_LOG(L"[FireIME] Measure: dpi_scale=%.2f\n", dpi);
     SIZE sz = {0, 0};
 
     HDC hdc = GetDC(hwnd_);
@@ -167,7 +222,7 @@ SIZE CandidateWindowController::Measure() {
     }
     Graphics g(hdc);
     FontFamily ff(U8ToU16(ap.font_name == "system" ? "Microsoft YaHei" : ap.font_name).c_str());
-    Font font(&ff, ap.font_size, FontStyleRegular, UnitPixel);
+    Font font(&ff, ap.font_size * dpi, FontStyleRegular, UnitPixel);
 
     auto measure = [&](const std::wstring& t) -> SizeF {
         RectF box;
@@ -175,8 +230,10 @@ SIZE CandidateWindowController::Measure() {
         return SizeF(box.Width, box.Height);
     };
 
-    float padL = ap.window_padding_left, padR = ap.window_padding_right;
-    float padT = ap.window_padding_top, padB = ap.window_padding_bottom;
+    float padL = ap.window_padding_left * dpi;
+    float padR = ap.window_padding_right * dpi;
+    float padT = ap.window_padding_top * dpi;
+    float padB = ap.window_padding_bottom * dpi;
 
     // 组字区（缓存区）行
     SizeF originSz = measure(U8ToU16(view_.original_string));
@@ -184,25 +241,38 @@ SIZE CandidateWindowController::Measure() {
     float maxW = originSz.Width;
 
     bool horizontal = config_.candidates_direction == fire::CandidatesDirection::Horizontal;
-    float x = padL, y = padT + lineH + ap.origin_candidates_space;
+    float candSpace = ap.candidate_space * dpi;
+    float originSpace = ap.origin_candidates_space * dpi;
+    float x = padL, y = padT + lineH + originSpace;
     float rowW = 0, totalH = y;
 
     candidateRects_.clear();
     for (size_t i = 0; i < view_.list.size(); ++i) {
-        std::wstring label = std::to_wstring(i + 1) + L". " + U8ToU16(view_.list[i].label);
-        SizeF s = measure(label);
+        // 布局：序号 + 文本 [+ 编码提示]，三段拼接测量，绘制时按相同顺序与颜色分段绘制
+        std::wstring index = std::to_wstring(i + 1) + L". ";
+        std::wstring txt = U8ToU16(view_.list[i].label);
+        std::wstring codeHint;
+        if (ShouldShowCode(config_, view_.original_string)) {
+            std::string hint = GetShownCode(view_.list[i], view_.original_string);
+            if (!hint.empty()) codeHint = L" " + U8ToU16(hint);
+        }
+        SizeF idxSz = measure(index);
+        SizeF txtSz = measure(txt);
+        SizeF codeSz = codeHint.empty() ? SizeF(0, 0) : measure(codeHint);
+        float totalW = idxSz.Width + txtSz.Width + codeSz.Width;
+        float h = (std::max)({idxSz.Height, txtSz.Height, codeSz.Height});
         RECT r;
         if (horizontal) {
             r.left = (LONG)x; r.top = (LONG)y;
-            r.right = (LONG)(x + s.Width); r.bottom = (LONG)(y + s.Height);
-            x += s.Width + ap.candidate_space;
+            r.right = (LONG)(x + totalW); r.bottom = (LONG)(y + h);
+            x += totalW + candSpace;
             rowW = x;
-            totalH = y + s.Height;
+            totalH = y + h;
         } else {
             r.left = (LONG)padL; r.top = (LONG)y;
-            r.right = (LONG)(padL + s.Width); r.bottom = (LONG)(y + s.Height);
-            y += s.Height + ap.candidate_space;
-            rowW = (std::max)(rowW, padL + s.Width);
+            r.right = (LONG)(padL + totalW); r.bottom = (LONG)(y + h);
+            y += h + candSpace;
+            rowW = (std::max)(rowW, padL + totalW);
             totalH = y;
         }
         candidateRects_.push_back(r);
@@ -248,6 +318,7 @@ POINT CandidateWindowController::ComputePosition(const SIZE& sz) {
 
 void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     const auto& ap = config_.theme.appearance(darkMode_);
+    const float dpi = GetDpiScale();  // 与 Measure 保持一致的 DPI 缩放
 
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
@@ -256,7 +327,7 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     SolidBrush bg(ToColor(ap.window_background_color));
     g.Clear(Color(0, 0, 0, 0));
     {
-        float r = ap.window_border_radius;
+        float r = ap.window_border_radius * dpi;
         GraphicsPath path;
         // 用完整宽高构造圆角矩形（此前 -1 会造成右/下各差 1 像素）
         RectF rc(0, 0, (REAL)sz.cx, (REAL)sz.cy);
@@ -269,34 +340,53 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     }
 
     FontFamily ff(U8ToU16(ap.font_name == "system" ? "Microsoft YaHei" : ap.font_name).c_str());
-    Font font(&ff, ap.font_size, FontStyleRegular, UnitPixel);
+    Font font(&ff, ap.font_size * dpi, FontStyleRegular, UnitPixel);
 
     // 组字区（缓存区）
     SolidBrush originBrush(ToColor(ap.origin_code_color));
     std::wstring origin = U8ToU16(view_.original_string);
     g.DrawString(origin.c_str(), (int)origin.size(), &font,
-                 PointF((REAL)ap.window_padding_left, (REAL)ap.window_padding_top), &originBrush);
+                 PointF((REAL)(ap.window_padding_left * dpi),
+                        (REAL)(ap.window_padding_top * dpi)),
+                 &originBrush);
 
     // 候选列表（首个高亮）
     SolidBrush idxBrush(ToColor(ap.candidate_index_color));
     SolidBrush textBrush(ToColor(ap.candidate_text_color));
+    SolidBrush codeBrush(ToColor(ap.candidate_code_color));
     SolidBrush selIdxBrush(ToColor(ap.selected_index_color));
     SolidBrush selTextBrush(ToColor(ap.selected_text_color));
+    SolidBrush selCodeBrush(ToColor(ap.selected_code_color));
 
     for (size_t i = 0; i < view_.list.size() && i < candidateRects_.size(); ++i) {
         const RECT& r = candidateRects_[i];
         bool selected = (i == 0);
         std::wstring index = std::to_wstring(i + 1) + L". ";
         std::wstring txt = U8ToU16(view_.list[i].label);
-        // 序号用序号色，候选文本用文本色（选中态各自用高亮色）
-        RectF idxBox;
+        // 编码提示（与 Measure 保持一致：wubi_code_tip 开启或反查模式时附加在文本后）
+        std::wstring codeHint;
+        if (ShouldShowCode(config_, view_.original_string)) {
+            std::string hint = GetShownCode(view_.list[i], view_.original_string);
+            if (!hint.empty()) codeHint = L" " + U8ToU16(hint);
+        }
+        // 按顺序绘制：序号 → 文本 → 编码提示，各段用对应颜色
+        RectF idxBox, txtBox;
         g.MeasureString(index.c_str(), (int)index.size(), &font, PointF(0, 0), &idxBox);
+        g.MeasureString(txt.c_str(), (int)txt.size(), &font, PointF(0, 0), &txtBox);
+        float curX = (REAL)r.left;
         g.DrawString(index.c_str(), (int)index.size(), &font,
-                     PointF((REAL)r.left, (REAL)r.top),
+                     PointF(curX, (REAL)r.top),
                      selected ? &selIdxBrush : &idxBrush);
+        curX += idxBox.Width;
         g.DrawString(txt.c_str(), (int)txt.size(), &font,
-                     PointF((REAL)r.left + idxBox.Width, (REAL)r.top),
+                     PointF(curX, (REAL)r.top),
                      selected ? &selTextBrush : &textBrush);
+        curX += txtBox.Width;
+        if (!codeHint.empty()) {
+            g.DrawString(codeHint.c_str(), (int)codeHint.size(), &font,
+                         PointF(curX, (REAL)r.top),
+                         selected ? &selCodeBrush : &codeBrush);
+        }
     }
 }
 
