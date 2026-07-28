@@ -11,7 +11,7 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(my_win_input LANGUAGES CXX)
+project(my_win_input LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,7 +23,20 @@ option(BUILD_TABLEBUILDER "Build wubi/pinyin table builder tool" ON)
 
 # ---- 定位 sqlite3 ----
 # macOS 上系统 SDK 提供 sqlite3.h 与 libsqlite3.tbd，直接链接 -lsqlite3 即可。
+# Windows 上若未安装 SQLite3，回退到项目自带的 third_party/sqlite3/sqlite3.c 源码编译。
 find_package(SQLite3 QUIET)
+if(NOT SQLite3_FOUND)
+    set(FIRE_SQLITE3_SRC ${CMAKE_SOURCE_DIR}/third_party/sqlite3/sqlite3.c)
+    set(FIRE_SQLITE3_INC ${CMAKE_SOURCE_DIR}/third_party/sqlite3)
+    add_library(fire_sqlite3 STATIC ${FIRE_SQLITE3_SRC})
+    target_include_directories(fire_sqlite3 PUBLIC ${FIRE_SQLITE3_INC})
+    if(WIN32)
+        target_link_libraries(fire_sqlite3 PUBLIC)
+    endif()
+    set(FIRE_SQLITE3_LIB fire_sqlite3)
+else()
+    set(FIRE_SQLITE3_LIB SQLite::SQLite3)
+endif()
 
 # ---- 内核静态库 ----
 if(BUILD_CORE)
@@ -40,21 +53,13 @@ if(BUILD_CORE)
     )
     target_include_directories(fire_core PUBLIC core/include)
 
-    if(SQLite3_FOUND)
-        target_link_libraries(fire_core PUBLIC SQLite::SQLite3)
-    else()
-        target_link_libraries(fire_core PUBLIC sqlite3)
-    endif()
+    target_link_libraries(fire_core PUBLIC ${FIRE_SQLITE3_LIB})
 endif()
 
 # ---- 词库构建工具 ----
 if(BUILD_TABLEBUILDER)
     add_executable(tablebuilder tablebuilder/main.cpp)
-    if(SQLite3_FOUND)
-        target_link_libraries(tablebuilder PRIVATE SQLite::SQLite3)
-    else()
-        target_link_libraries(tablebuilder PRIVATE sqlite3)
-    endif()
+    target_link_libraries(tablebuilder PRIVATE ${FIRE_SQLITE3_LIB})
 endif()
 
 # ---- 内核单元测试 ----
@@ -70,11 +75,7 @@ if(BUILD_TESTS AND BUILD_CORE)
     )
     target_include_directories(fire_tests PRIVATE tests)
     target_link_libraries(fire_tests PRIVATE fire_core)
-    if(SQLite3_FOUND)
-        target_link_libraries(fire_tests PRIVATE SQLite::SQLite3)
-    else()
-        target_link_libraries(fire_tests PRIVATE sqlite3)
-    endif()
+    target_link_libraries(fire_tests PRIVATE ${FIRE_SQLITE3_LIB})
 
     add_test(NAME fire_tests COMMAND fire_tests)
 endif()

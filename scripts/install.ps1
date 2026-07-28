@@ -77,6 +77,11 @@ $StatsDb= "$ConfigDir\statistics.sqlite"
 $TmpDir = "$env:TEMP\fire_install"
 $null = New-Item -ItemType Directory -Path $TmpDir -Force
 
+# 项目内置码表（来源：Fire 项目 Resources/，86 版五笔 + 98 版五笔 + 拼音）
+$BuiltinWbTable   = "$RepoRoot\resources\wb_table.txt"
+$BuiltinWb98Table = "$RepoRoot\resources\wb_98_table.txt"
+$BuiltinPyTable   = "$RepoRoot\resources\py_table.txt"
+
 function Create-DictDb {
     if (Test-Path $DictDb) {
         Write-Host "  [SKIP] wb_py_dict.sqlite already exists" -ForegroundColor DarkGray
@@ -88,52 +93,66 @@ function Create-DictDb {
         return
     }
 
-    # Create wubi code table (code + word)
-    $wbLines = @(
-        "aaaa gong",
-        "kkkk kou",
-        "tttt he",
-        "wwww ren",
-        "jjjj ri",
-        "eeee yue",
-        "bbbb zi",
-        "vvvv nv",
-        "cccc you",
-        "an an",
-        "wgkr wubi",
-        "rq de",
-        "wq ni",
-        "wb ta",
-        "qn wo",
-        "yn shi",
-        "ce neng",
-        "gc dao"
-    )
-    $wbPath = "$TmpDir\wb_dict.txt"
-    [System.IO.File]::WriteAllLines($wbPath, $wbLines, [System.Text.UTF8Encoding]::new($false))
+    # 优先使用项目内置的完整码表；若不存在则回退到最小测试词库
+    $useBuiltinWb = Test-Path $BuiltinWbTable
+    $useBuiltinPy = Test-Path $BuiltinPyTable
 
-    # Create pinyin code table
-    $pyLines = @(
-        "an an",
-        "de de",
-        "ni ni",
-        "ta ta",
-        "wo wo",
-        "shi shi",
-        "neng neng",
-        "dao dao"
-    )
-    $pyPath = "$TmpDir\py_dict.txt"
-    [System.IO.File]::WriteAllLines($pyPath, $pyLines, [System.Text.UTF8Encoding]::new($false))
+    if ($useBuiltinWb) {
+        $wbPath = $BuiltinWbTable
+        Write-Host "  Using builtin wubi table (86): $wbPath" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [WARN] builtin wb_table.txt not found, using minimal test data" -ForegroundColor Yellow
+        $wbLines = @(
+            "aaaa gong",
+            "kkkk kou",
+            "tttt he",
+            "wwww ren",
+            "jjjj ri",
+            "eeee yue",
+            "bbbb zi",
+            "vvvv nv",
+            "cccc you",
+            "an an",
+            "wgkr wubi",
+            "rq de",
+            "wq ni",
+            "wb ta",
+            "qn wo",
+            "yn shi",
+            "ce neng",
+            "gc dao"
+        )
+        $wbPath = "$TmpDir\wb_dict.txt"
+        [System.IO.File]::WriteAllLines($wbPath, $wbLines, [System.Text.UTF8Encoding]::new($false))
+    }
 
-    Write-Host "  Creating wb_dict..." -ForegroundColor DarkGray
+    if ($useBuiltinPy) {
+        $pyPath = $BuiltinPyTable
+        Write-Host "  Using builtin pinyin table: $pyPath" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [WARN] builtin py_table.txt not found, using minimal test data" -ForegroundColor Yellow
+        $pyLines = @(
+            "an an",
+            "de de",
+            "ni ni",
+            "ta ta",
+            "wo wo",
+            "shi shi",
+            "neng neng",
+            "dao dao"
+        )
+        $pyPath = "$TmpDir\py_dict.txt"
+        [System.IO.File]::WriteAllLines($pyPath, $pyLines, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    Write-Host "  Creating wb_dict (this may take a moment)..." -ForegroundColor DarkGray
     & $Tablebuilder --create-dict $wbPath wb_dict $DictDb 2>&1 | ForEach-Object { Write-Host ("    " + $_) -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [FAIL] wb_dict creation failed" -ForegroundColor Red
         return
     }
 
-    Write-Host "  Creating py_dict..." -ForegroundColor DarkGray
+    Write-Host "  Creating py_dict (this may take a moment)..." -ForegroundColor DarkGray
     & $Tablebuilder --create-dict $pyPath py_dict $DictDb 2>&1 | ForEach-Object { Write-Host ("    " + $_) -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [FAIL] py_dict creation failed" -ForegroundColor Red
