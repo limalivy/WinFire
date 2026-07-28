@@ -1,0 +1,58 @@
+# ---- Build output ----
+build/
+out/
+cmake-build-*/
+Debug/
+Release/
+x64/
+Win32/
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+compile_commands.json
+
+# ---- Visual Studio / MSVC ----
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+ipch/
+*.aps
+*.ncb
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# ---- Object / build intermediates ----
+*.o
+*.a
+*.d
+*.out
+
+# ---- Test / runtime artifacts ----
+test_*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+test_stats_export.csv
+
+# ---- macOS ----
+.DS_Store
+
+# ---- Editor ----
+.idea/
+*.swp
+*~

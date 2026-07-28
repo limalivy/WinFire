@@ -1,0 +1,100 @@
+// 业火五笔 Windows 配置界面资源脚本（MFC 对话框模板）
+#include <afxres.h>
+#include "InputSettingsPage.h"
+#include "PunctuationPage.h"
+#include "AppModePage.h"
+#include "StatisticsPage.h"
+#include "DictPage.h"
+
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+
+//////////////////// 输入设置页 ////////////////////
+IDD_PAGE_INPUT DIALOGEX 0, 0, 260, 240
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "输入设置"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    CONTROL "启用词组输入",        IDC_CHK_WORD_INPUT,   "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 12, 120, 12
+    CONTROL "启用动态调频",        IDC_CHK_DYNAMIC_FREQ, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 30, 120, 12
+    CONTROL "` 键拼音反查形码",    IDC_CHK_Z_KEY_QUERY,  "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 48, 140, 12
+    CONTROL "候选窗内显示编码",    IDC_CHK_SHOW_CODE,    "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 66, 140, 12
+    CONTROL "显示五笔编码提示",    IDC_CHK_WUBI_CODE_TIP,"Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 84, 140, 12
+    CONTROL "唯一候选自动上屏",    IDC_CHK_WUBI_AUTO_COMMIT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP, 12, 102, 140, 12
+    LTEXT   "候选个数:",           IDC_STATIC,           12, 124, 50, 10
+    EDITTEXT                        IDC_EDIT_CAND_COUNT,  66, 122, 40, 14, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT   "编码方案:",           IDC_STATIC,           12, 146, 50, 10
+    COMBOBOX                        IDC_CMB_CODE_MODE,    66, 144, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT   "候选方向:",           IDC_STATIC,           12, 168, 50, 10
+    COMBOBOX                        IDC_CMB_CAND_DIRECTION,66,166, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT   "五笔顶字:",           IDC_STATIC,           12, 190, 50, 10
+    COMBOBOX                        IDC_CMB_WUBI_DING,    66, 188, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT   "中英切换键:",         IDC_STATIC,           12, 212, 50, 10
+    COMBOBOX                        IDC_CMB_TOGGLE_KEY,   66, 210, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+END
+
+//////////////////// 标点与中英文页 ////////////////////
+IDD_PAGE_PUNCT DIALOGEX 0, 0, 260, 200
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "标点与中英文"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    LTEXT   "标点模式:",              IDC_STATIC,            12, 12, 50, 10
+    COMBOBOX                          IDC_CMB_PUNCT_MODE,    66, 10, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    CONTROL "数字后。自动转小数点",   IDC_CHK_DOT_AFTER_NUM, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 36, 160, 12
+    CONTROL "编码后标点先上屏首候选", IDC_CHK_PUNCT_COMMIT,  "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 54, 180, 12
+    CONTROL "禁止切换英文",           IDC_CHK_DISABLE_EN,    "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 72, 120, 12
+    CONTROL "禁止 ; 键临时英文",      IDC_CHK_DISABLE_TEMP_EN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP, 12, 90, 140, 12
+    CONTROL "中英文间自动加空格",     IDC_CHK_WS_ZH_EN,      "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 108, 160, 12
+END
+
+//////////////////// 按应用输入模式页 ////////////////////
+IDD_PAGE_APPMODE DIALOGEX 0, 0, 260, 220
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "按应用模式"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    CONTROL "保持各应用最后使用的输入模式", IDC_CHK_KEEP_APP_MODE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 12, 220, 12
+    LTEXT   "模式提示显示时机:",     IDC_STATIC,            12, 32, 80, 10
+    COMBOBOX                          IDC_CMB_TIP_SHOW_TIME, 96, 30, 130, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT   "应用固定输入模式:",     IDC_STATIC,            12, 54, 100, 10
+    CONTROL "",                       IDC_LIST_APPS,         "SysListView32", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, 12, 68, 236, 100
+    LTEXT   "进程名:",               IDC_STATIC,            12, 176, 34, 10
+    EDITTEXT                          IDC_EDIT_APP_ID,       48, 174, 90, 14, ES_AUTOHSCROLL
+    COMBOBOX                          IDC_CMB_APP_MODE,      144, 174, 60, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    PUSHBUTTON "添加",               IDC_BTN_APP_ADD,       12, 196, 50, 16
+    PUSHBUTTON "删除选中",           IDC_BTN_APP_REMOVE,    68, 196, 60, 16
+END
+
+//////////////////// 输入统计页 ////////////////////
+IDD_PAGE_STATS DIALOGEX 0, 0, 260, 220
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "输入统计"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    CONTROL "启用打字量统计",       IDC_CHK_ENABLE_STATS,  "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 12, 140, 12
+    CONTROL "启用字词频统计",       IDC_CHK_ENABLE_HANZI,  "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 30, 140, 12
+    LTEXT   "累计输入字数：",       IDC_STATIC_TOTAL_COUNT,12, 50, 236, 10
+    LTEXT   "不同词条数：0",        IDC_STATIC_UNIQUE_COUNT,12, 64, 236, 10
+    CONTROL "",                       IDC_LIST_HANZI_FREQ,   "SysListView32", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, 12, 80, 236, 100
+    PUSHBUTTON "刷新",               IDC_BTN_STATS_REFRESH, 12, 186, 44, 16
+    PUSHBUTTON "清除全部",           IDC_BTN_STATS_CLEAR,   60, 186, 54, 16
+    PUSHBUTTON "清除字词频",         IDC_BTN_STATS_CLEAR_HANZI, 118, 186, 64, 16
+    PUSHBUTTON "导出CSV",            IDC_BTN_STATS_EXPORT,  186, 186, 54, 16
+END
+
+//////////////////// 词库管理页 ////////////////////
+IDD_PAGE_DICT DIALOGEX 0, 0, 260, 200
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "词库管理"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    LTEXT   "五笔码表:",     IDC_STATIC,            12, 14, 50, 10
+    EDITTEXT                 IDC_EDIT_WB_TABLE,     66, 12, 130, 14, ES_AUTOHSCROLL
+    PUSHBUTTON "浏览...",    IDC_BTN_BROWSE_WB,     200, 11, 45, 16
+    LTEXT   "拼音码表:",     IDC_STATIC,            12, 38, 50, 10
+    EDITTEXT                 IDC_EDIT_PY_TABLE,     66, 36, 130, 14, ES_AUTOHSCROLL
+    PUSHBUTTON "浏览...",    IDC_BTN_BROWSE_PY,     200, 35, 45, 16
+    PUSHBUTTON "生成词库",   IDC_BTN_BUILD_DICT,    66, 64, 80, 20
+    PUSHBUTTON "编辑用户词库",IDC_BTN_EDIT_USERDICT, 150, 64, 90, 20
+    LTEXT   "",              IDC_STATIC_BUILD_STATUS,12, 96, 230, 12
+END

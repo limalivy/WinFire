@@ -1,0 +1,118 @@
+//
+//  TextService.h — 业火输入法 TSF Text Input Processor（ATL 纯原生 COM）
+//
+//  实现的 TSF 接口：
+//    ITfTextInputProcessorEx  —— 激活/停用
+//    ITfKeyEventSink          —— 按键钩子（核心）
+//    ITfThreadMgrEventSink    —— 焦点/文档切换
+//    ITfCompositionSink       —— 组字被外部终止的回调
+//
+#pragma once
+
+#include <windows.h>
+#include <msctf.h>
+#include <atlbase.h>
+#include <atlcom.h>
+#include <memory>
+#include <string>
+
+#include "Globals.h"
+#include "KeyEventTranslator.h"
+#include "TsfInputClient.h"
+
+#include "fire/config.h"
+#include "fire/dict_manager.h"
+#include "fire/input_engine.h"
+#include "fire/statistics.h"
+
+namespace firewin {
+
+class CandidateWindowController;
+class CFireLangBarButton;
+
+class ATL_NO_VTABLE CFireTextService
+    : public CComObjectRootEx<CComSingleThreadModel>,
+      public CComCoClass<CFireTextService, &CLSID_FireTextService>,
+      public ITfTextInputProcessorEx,
+      public ITfThreadMgrEventSink,
+      public ITfKeyEventSink,
+      public ITfCompositionSink {
+public:
+    CFireTextService();
+    ~CFireTextService();
+
+    // ATL COM map
+    BEGIN_COM_MAP(CFireTextService)
+        COM_INTERFACE_ENTRY(ITfTextInputProcessor)
+        COM_INTERFACE_ENTRY(ITfTextInputProcessorEx)
+        COM_INTERFACE_ENTRY(ITfThreadMgrEventSink)
+        COM_INTERFACE_ENTRY(ITfKeyEventSink)
+        COM_INTERFACE_ENTRY(ITfCompositionSink)
+    END_COM_MAP()
+
+    DECLARE_NO_REGISTRY()  // 注册走自定义 DllRegisterServer
+
+    // ---- ITfTextInputProcessor / Ex ----
+    STDMETHODIMP Activate(ITfThreadMgr* ptim, TfClientId tid) override;
+    STDMETHODIMP Deactivate() override;
+    STDMETHODIMP ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD dwFlags) override;
+
+    // ---- ITfThreadMgrEventSink ----
+    STDMETHODIMP OnInitDocumentMgr(ITfDocumentMgr*) override { return S_OK; }
+    STDMETHODIMP OnUninitDocumentMgr(ITfDocumentMgr*) override { return S_OK; }
+    STDMETHODIMP OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr* pdimPrevFocus) override;
+    STDMETHODIMP OnPushContext(ITfContext*) override { return S_OK; }
+    STDMETHODIMP OnPopContext(ITfContext*) override { return S_OK; }
+
+    // ---- ITfKeyEventSink ----
+    STDMETHODIMP OnSetFocus(BOOL fForeground) override;
+    STDMETHODIMP OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) override;
+    STDMETHODIMP OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) override;
+    STDMETHODIMP OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) override;
+    STDMETHODIMP OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) override;
+    STDMETHODIMP OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* pfEaten) override;
+
+    // ---- ITfCompositionSink ----
+    STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) override;
+
+    // ---- 供语言栏按钮（CFireLangBarButton）调用 ----
+    void ToggleInputModeFromLangBar();
+    void SetInputModeFromLangBar(fire::InputMode mode);
+    fire::InputMode CurrentInputMode() const;
+
+private:
+    // 引擎/词库/配置（每个 TIP 实例一份）
+    fire::Config config_;
+    std::unique_ptr<fire::DictManager> dict_;
+    std::unique_ptr<fire::InputEngine> engine_;
+    std::unique_ptr<fire::Statistics> stats_;
+    TsfInputClient inputClient_;
+    KeyEventTranslator translator_;
+    std::unique_ptr<CandidateWindowController> candWindow_;
+
+    CComPtr<ITfThreadMgr> threadMgr_;
+    TfClientId clientId_ = TF_CLIENTID_NULL;
+    DWORD threadMgrCookie_ = TF_INVALID_COOKIE;
+
+    // 语言栏按钮（中/英状态）
+    CFireLangBarButton* langBar_ = nullptr;
+
+    // per-app 输入模式：记录上一个获得焦点的应用标识，失焦时保存
+    std::string currentAppId_;
+
+    void InitEngine();
+    void LoadConfigFromDisk();  // 读取 config.json
+    void RegisterLangBarButton();
+    void UnregisterLangBarButton();
+    void RefreshLangBar();
+
+    // 在一次 EditSession 中处理按键（真正修改文档必须在 EditSession 内）
+    bool ProcessKeyInEditSession(ITfContext* pic, const fire::KeyEvent& ev);
+
+    // 判断是否需要吃掉该键（用于 OnTestKeyDown）：中文模式下的可见字符/功能键
+    bool ShouldEat(const fire::KeyEvent& ev) const;
+
+    friend class KeyEditSession;  // 内部 EditSession 实现
+};
+
+}  // namespace firewin

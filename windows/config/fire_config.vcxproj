@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 业火输入法 配置界面（MFC）EXE 工程。需在 Windows + VS2022 中构建。 -->
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{F1RE0002-0000-0000-0000-0000000CFG01}</ProjectGuid>
+    <RootNamespace>fire_config</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseOfMfc>Dynamic</UseOfMfc>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>sqlite3.lib;shell32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="ConfigApp.cpp" />
+    <ClCompile Include="InputSettingsPage.cpp" />
+    <ClCompile Include="PunctuationPage.cpp" />
+    <ClCompile Include="AppModePage.cpp" />
+    <ClCompile Include="StatisticsPage.cpp" />
+    <ClCompile Include="DictPage.cpp" />
+    <!-- 跨平台内核：统计功能所需 -->
+    <ClCompile Include="..\..\core\src\statistics.cpp" />
+    <ClCompile Include="..\..\core\src\input_mode_cache.cpp" />
+    <ClCompile Include="..\..\core\src\candidate.cpp" />
+    <ClCompile Include="..\..\core\src\types.cpp" />
+    <ClCompile Include="..\..\core\src\utf8.cpp" />
+    <ClCompile Include="ConfigStore.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ConfigApp.h" />
+    <ClInclude Include="InputSettingsPage.h" />
+    <ClInclude Include="PunctuationPage.h" />
+    <ClInclude Include="AppModePage.h" />
+    <ClInclude Include="StatisticsPage.h" />
+    <ClInclude Include="DictPage.h" />
+    <ClInclude Include="ConfigStore.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="ConfigApp.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

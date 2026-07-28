@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 业火输入法 TSF TIP（ATL 纯原生 COM）DLL 工程。需在 Windows + VS2022 中构建。 -->
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{F1RE0001-0000-0000-0000-00000000TSF1}</ProjectGuid>
+    <RootNamespace>fire_tsf</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseOfAtl>Static</UseOfAtl>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\config;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <ModuleDefinitionFile>fire_tsf.def</ModuleDefinitionFile>
+      <AdditionalDependencies>sqlite3.lib;gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- Windows 层 -->
+    <ClCompile Include="Globals.cpp" />
+    <ClCompile Include="KeyEventTranslator.cpp" />
+    <ClCompile Include="TsfInputClient.cpp" />
+    <ClCompile Include="TextService.cpp" />
+    <ClCompile Include="LangBarButton.cpp" />
+    <ClCompile Include="..\config\ConfigStore.cpp" />
+    <ClCompile Include="DllMain.cpp" />
+    <ClCompile Include="..\candidate_window\CandidateWindow.cpp" />
+    <!-- 跨平台内核（与 TIP 一起编译进 DLL） -->
+    <ClCompile Include="..\..\core\src\types.cpp" />
+    <ClCompile Include="..\..\core\src\candidate.cpp" />
+    <ClCompile Include="..\..\core\src\key_event.cpp" />
+    <ClCompile Include="..\..\core\src\punctuation.cpp" />
+    <ClCompile Include="..\..\core\src\dict_manager.cpp" />
+    <ClCompile Include="..\..\core\src\input_engine.cpp" />
+    <ClCompile Include="..\..\core\src\input_mode_cache.cpp" />
+    <ClCompile Include="..\..\core\src\statistics.cpp" />
+    <ClCompile Include="..\..\core\src\utf8.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Globals.h" />
+    <ClInclude Include="KeyEventTranslator.h" />
+    <ClInclude Include="TsfInputClient.h" />
+    <ClInclude Include="TextService.h" />
+    <ClInclude Include="LangBarButton.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
