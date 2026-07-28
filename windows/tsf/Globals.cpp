@@ -2,6 +2,8 @@
 //  Globals.cpp — GUID 定义与全局变量
 //
 #include "Globals.h"
+#include <atlbase.h>
+#include <atlcom.h>
 
 // 注意：这些 GUID 为示例值，正式发布前务必用 guidgen/uuidgen 生成唯一值。
 const CLSID CLSID_FireTextService =
@@ -18,3 +20,13 @@ const GUID GUID_FireLangBarButton =
 
 HINSTANCE g_hInst = nullptr;
 LONG g_cRefDll = 0;
+
+// 静态 ATL 必需：必须有一个全局 CAtlDllModuleT 实例来初始化 _pAtlModule，
+// 否则 CComObject<>::CreateInstance 会因 _pAtlModule 为 nullptr 而崩溃。
+// 全局对象构造时自动初始化 _pAtlModule，无需在 DllMain 里调用 Init/Term。
+class CFireAtlModule : public CAtlDllModuleT<CFireAtlModule> {};
+CFireAtlModule g_AtlModule;
+
+// DllMain 调用的 ATL Module 初始化/终止化包装（空实现，保留接口以便未来扩展）
+HRESULT FireAtlModuleInit(HINSTANCE /*hInst*/) { return S_OK; }
+void FireAtlModuleTerm() {}

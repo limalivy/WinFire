@@ -2,6 +2,7 @@
 //  CandidateWindow.cpp — Win32 + GDI+ 自绘候选窗
 //
 #include "CandidateWindow.h"
+#include "../tsf/DebugLog.h"
 
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -52,14 +53,17 @@ bool CandidateWindowController::IsDarkMode() {
 }
 
 bool CandidateWindowController::Create(HINSTANCE hInst) {
+    FIRE_LOG_ENTER();
     hInst_ = hInst;
+    FIRE_LOG(L"[FireIME] CandidateWindow::Create hInst=%p\n", (void*)hInst);
 
     GdiplusStartupInput gi;
     if (GdiplusStartup(&gdiplusToken_, &gi, nullptr) != Gdiplus::Ok) {
-        OutputDebugStringW(L"[FireIME] CandidateWindow: GdiplusStartup FAILED\n");
+        FIRE_LOG(L"[FireIME] CandidateWindow: GdiplusStartup FAILED\n");
         gdiplusToken_ = 0;
         return false;
     }
+    FIRE_LOG(L"[FireIME] CandidateWindow: GdiplusStartup OK token=%lu\n", (unsigned long)gdiplusToken_);
 
     WNDCLASSEXW wc = {sizeof(wc)};
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -68,7 +72,8 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.lpszClassName = kClassName;
     // RegisterClassExW 可能因类已注册（同一进程重复激活）返回 0，不算失败。
-    RegisterClassExW(&wc);
+    ATOM atom = RegisterClassExW(&wc);
+    FIRE_LOG(L"[FireIME] CandidateWindow: RegisterClassExW atom=%u\n", (unsigned)atom);
 
     // 无焦点浮窗：TOPMOST + NOACTIVATE + TOOLWINDOW + LAYERED（用 UpdateLayeredWindow 逐像素透明）
     hwnd_ = CreateWindowExW(
@@ -76,15 +81,19 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
         kClassName, L"", WS_POPUP,
         0, 0, 10, 10, nullptr, nullptr, hInst, this);
     if (!hwnd_) {
-        OutputDebugStringW(L"[FireIME] CandidateWindow: CreateWindowExW FAILED\n");
+        FIRE_LOG(L"[FireIME] CandidateWindow: CreateWindowExW FAILED err=%lu\n", GetLastError());
         return false;
     }
+    FIRE_LOG(L"[FireIME] CandidateWindow: CreateWindowExW OK hwnd=%p\n", (void*)hwnd_);
+    FIRE_LOG_EXIT();
     return true;
 }
 
 void CandidateWindowController::Destroy() {
+    FIRE_LOG_ENTER();
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
     if (gdiplusToken_) { GdiplusShutdown(gdiplusToken_); gdiplusToken_ = 0; }
+    FIRE_LOG_EXIT();
 }
 
 LRESULT CALLBACK CandidateWindowController::WndProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -112,6 +121,7 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
         case WM_LBUTTONUP: {
             POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             int idx = HitTest(pt);
+            FIRE_LOG(L"[FireIME] WM_LBUTTONUP: idx=%d list_size=%zu\n", idx, view_.list.size());
             if (idx >= 0 && idx < (int)view_.list.size() && onSelect_) {
                 onSelect_(view_.list[idx]);
             }
@@ -120,18 +130,21 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
 
         case WM_MOUSEWHEEL: {
             short delta = GET_WHEEL_DELTA_WPARAM(wParam);
+            FIRE_LOG(L"[FireIME] WM_MOUSEWHEEL: delta=%d\n", (int)delta);
             if (onPage_) onPage_(delta < 0 ? +1 : -1);
             return 0;
         }
 
         case WM_TIMER:
             if (wParam == kToastTimerId) {
+                FIRE_LOG(L"[FireIME] WM_TIMER: toast auto-hide\n");
                 KillTimer(hwnd, kToastTimerId);
                 Hide();
             }
             return 0;
 
         case WM_DESTROY:
+            FIRE_LOG(L"[FireIME] WM_DESTROY: hwnd=%p\n", (void*)hwnd);
             // 用 WndProc 传入的真实 hwnd 交给 DefWindowProc，保证 WM_NCDESTROY 默认清理执行；
             // 不在此处置空 hwnd_，避免后续 DefWindowProc 收到 NULL 句柄。
             break;
@@ -141,11 +154,17 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
 }
 
 SIZE CandidateWindowController::Measure() {
+    FIRE_LOG_ENTER();
     // 用一个临时 DC + GDI+ 测量文本尺寸。此处给出布局公式，具体像素以实际字体度量为准。
     const auto& ap = config_.theme.appearance(darkMode_);
     SIZE sz = {0, 0};
 
     HDC hdc = GetDC(hwnd_);
+    if (!hdc) {
+        FIRE_LOG(L"[FireIME] Measure: GetDC FAILED err=%lu\n", GetLastError());
+        FIRE_LOG_EXIT();
+        return sz;
+    }
     Graphics g(hdc);
     FontFamily ff(U8ToU16(ap.font_name == "system" ? "Microsoft YaHei" : ap.font_name).c_str());
     Font font(&ff, ap.font_size, FontStyleRegular, UnitPixel);
@@ -195,14 +214,19 @@ SIZE CandidateWindowController::Measure() {
     ReleaseDC(hwnd_, hdc);
     if (sz.cx < 40) sz.cx = 40;
     if (sz.cy < 24) sz.cy = 24;
+    FIRE_LOG(L"[FireIME] Measure: size=(%ld,%ld)\n", (long)sz.cx, (long)sz.cy);
+    FIRE_LOG_EXIT();
     return sz;
 }
 
 POINT CandidateWindowController::ComputePosition(const SIZE& sz) {
+    FIRE_LOG_ENTER();
     // 默认放在光标下方；越界则翻到上方 / 贴屏幕边
     const fire::CaretRect& c = view_.caret;
     int x = (int)c.x;
     int y = (int)(c.y + c.height) + 2;
+    FIRE_LOG(L"[FireIME] ComputePosition: caret=(%d,%d,%dx%d) win_size=(%ld,%ld)\n",
+             c.x, c.y, c.width, c.height, (long)sz.cx, (long)sz.cy);
 
     HMONITOR mon = MonitorFromPoint(POINT{x, y}, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)};
@@ -217,6 +241,8 @@ POINT CandidateWindowController::ComputePosition(const SIZE& sz) {
         }
     }
     // GetMonitorInfo 失败时保留光标下方原始坐标，避免钉在屏幕左上角。
+    FIRE_LOG(L"[FireIME] ComputePosition: final=(%d,%d)\n", x, y);
+    FIRE_LOG_EXIT();
     return POINT{x, y};
 }
 
@@ -275,8 +301,16 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
 }
 
 void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
+    FIRE_LOG_ENTER();
+    FIRE_LOG(L"[FireIME] Render: pos=(%ld,%ld) size=(%ld,%ld) hwnd=%p\n",
+             (long)pos.x, (long)pos.y, (long)sz.cx, (long)sz.cy, (void*)hwnd_);
     // 用 UpdateLayeredWindow 做逐像素 alpha，圆角外区域完全透明（无黑块/残影）。
     HDC screenDC = GetDC(nullptr);
+    if (!screenDC) {
+        FIRE_LOG(L"[FireIME] Render: GetDC(nullptr) FAILED err=%lu\n", GetLastError());
+        FIRE_LOG_EXIT();
+        return;
+    }
     HDC memDC = CreateCompatibleDC(screenDC);
 
     BITMAPINFO bmi = {0};
@@ -303,21 +337,34 @@ void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
     blend.BlendOp = AC_SRC_OVER;
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;  // 使用位图逐像素 alpha
-    UpdateLayeredWindow(hwnd_, screenDC, &ptDst, &size, memDC, &ptSrc, 0, &blend, ULW_ALPHA);
+    BOOL ok = UpdateLayeredWindow(hwnd_, screenDC, &ptDst, &size, memDC, &ptSrc, 0, &blend, ULW_ALPHA);
+    if (!ok) {
+        FIRE_LOG(L"[FireIME] Render: UpdateLayeredWindow FAILED err=%lu\n", GetLastError());
+    }
 
     SelectObject(memDC, oldBmp);
     DeleteObject(hBmp);
     DeleteDC(memDC);
     ReleaseDC(nullptr, screenDC);
     lastPos_ = pos;
+    FIRE_LOG_EXIT();
 }
 
 void CandidateWindowController::Show(const fire::CandidatesView& view) {
+    FIRE_LOG_ENTER();
+    FIRE_LOG(L"[FireIME] Show: hwnd=%p list_size=%zu origin='%hs'\n",
+             (void*)hwnd_, view.list.size(), view.original_string.c_str());
     view_ = view;
-    if (!hwnd_) return;
+    if (!hwnd_) {
+        FIRE_LOG(L"[FireIME] Show: hwnd_ null, abort\n");
+        FIRE_LOG_EXIT();
+        return;
+    }
     KillTimer(hwnd_, kToastTimerId);  // 取消可能存在的提示自动隐藏定时器
     if (view_.list.empty() && view_.original_string.empty()) {
+        FIRE_LOG(L"[FireIME] Show: empty view, calling Hide\n");
         Hide();
+        FIRE_LOG_EXIT();
         return;
     }
     darkMode_ = IsDarkMode();  // 每次显示刷新一次，绘制期间使用同一值
@@ -328,23 +375,30 @@ void CandidateWindowController::Show(const fire::CandidatesView& view) {
     Render(pos, sz);
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     visible_ = true;
+    FIRE_LOG_EXIT();
 }
 
 void CandidateWindowController::Hide() {
+    FIRE_LOG_ENTER();
+    FIRE_LOG(L"[FireIME] Hide: hwnd=%p visible=%d\n", (void*)hwnd_, visible_ ? 1 : 0);
     if (hwnd_ && visible_) {
         KillTimer(hwnd_, kToastTimerId);
         ShowWindow(hwnd_, SW_HIDE);
         visible_ = false;
     }
+    FIRE_LOG_EXIT();
 }
 
 void CandidateWindowController::ShowToast(const std::string& label) {
+    FIRE_LOG_ENTER();
+    FIRE_LOG(L"[FireIME] ShowToast: label='%hs'\n", label.c_str());
     // 把中英文标签作为一个单独提示显示在候选窗位置，短暂后自动隐藏。
     fire::CandidatesView v;
     v.original_string = label;
     v.caret = view_.caret;
     Show(v);
     if (hwnd_) SetTimer(hwnd_, kToastTimerId, 800, nullptr);  // 800ms 后自动隐藏
+    FIRE_LOG_EXIT();
 }
 
 int CandidateWindowController::HitTest(POINT pt) const {

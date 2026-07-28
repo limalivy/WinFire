@@ -37,6 +37,14 @@
       <AdditionalDependencies>gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
+  <!-- Debug 配置：开启 FIRE_DEBUG 日志 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <PreprocessorDefinitions>FIRE_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions>
+      </UndefinePreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <!-- Windows 层 -->
     <ClCompile Include="Globals.cpp" />
@@ -62,6 +70,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Globals.h" />
+    <ClInclude Include="DebugLog.h" />
     <ClInclude Include="KeyEventTranslator.h" />
     <ClInclude Include="TsfInputClient.h" />
     <ClInclude Include="TextService.h" />

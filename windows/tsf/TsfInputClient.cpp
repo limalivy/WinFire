@@ -2,6 +2,7 @@
 //  TsfInputClient.cpp
 //
 #include "TsfInputClient.h"
+#include "DebugLog.h"
 #include "KeyEventTranslator.h"
 #include "../candidate_window/CandidateWindow.h"
 
@@ -11,6 +12,8 @@ namespace firewin {
 
 // 在组字区写文本：用 ITfInsertAtSelection 插入，并对新范围设置组字显示属性。
 void TsfInputClient::SetCompositionText(const std::wstring& text) {
+    FIRE_LOG(L"[FireIME] SetCompositionText: pContext=%p text_len=%zu composition=%p\n",
+             (void*)session_.pContext, text.size(), (void*)composition_);
     if (!session_.pContext) return;
 
     ITfInsertAtSelection* pInsert = nullptr;
@@ -22,15 +25,18 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
     if (!composition_) {
         // 用非 QUERYONLY 方式真正插入初始文本，得到一个非零长度范围再开始组字，
         // 避免部分宿主在零长度组字范围上丢失首字符 / 不显示组字区。
-        if (SUCCEEDED(pInsert->InsertTextAtSelection(session_.editCookie, 0, text.c_str(),
-                                                     (LONG)text.size(), &pRange))) {
+        HRESULT hr = pInsert->InsertTextAtSelection(session_.editCookie, 0, text.c_str(),
+                                                     (LONG)text.size(), &pRange);
+        FIRE_LOG_HR(hr, L"InsertTextAtSelection");
+        if (SUCCEEDED(hr)) {
             ITfContextComposition* pCtxComp = nullptr;
             if (SUCCEEDED(session_.pContext->QueryInterface(IID_ITfContextComposition,
                                                             (void**)&pCtxComp))) {
                 // 传入 TextService 提供的 ITfCompositionSink，使宿主主动终止组字时能回调
                 // OnCompositionTerminated，避免 composition_ 悬空、引擎与文档状态失步。
-                pCtxComp->StartComposition(session_.editCookie, pRange, compositionSink_,
+                hr = pCtxComp->StartComposition(session_.editCookie, pRange, compositionSink_,
                                            &composition_);
+                FIRE_LOG_HR(hr, L"StartComposition");
                 pCtxComp->Release();
             }
             // 初始文本已插入，后续 SetText 会覆盖为最新组字串。
@@ -40,7 +46,8 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
     }
 
     if (pRange) {
-        pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
+        HRESULT hr = pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
+        FIRE_LOG_HR(hr, L"SetText");
         // TODO: 用 ITfProperty(GUID_PROP_ATTRIBUTE) + GUID_FireDisplayAttributeInput 设置下划线高亮
         // 更新选区到组字区末尾
         TF_SELECTION sel;
@@ -55,6 +62,8 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
 }
 
 void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
+    FIRE_LOG(L"[FireIME] EndCompositionAndCommit: pContext=%p composition=%p text_len=%zu\n",
+             (void*)session_.pContext, (void*)composition_, text.size());
     if (!session_.pContext) return;
     ITfRange* pRange = nullptr;
     if (composition_ && SUCCEEDED(composition_->GetRange(&pRange)) && pRange) {
@@ -64,6 +73,7 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
         composition_->EndComposition(session_.editCookie);
         composition_->Release();
         composition_ = nullptr;
+        FIRE_LOG(L"[FireIME] EndCompositionAndCommit: composition ended OK\n");
     } else if (!text.empty()) {
         // 无组字：直接在选区插入
         ITfInsertAtSelection* pInsert = nullptr;
@@ -74,22 +84,26 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
                                            (LONG)text.size(), &r);
             if (r) r->Release();
             pInsert->Release();
+            FIRE_LOG(L"[FireIME] EndCompositionAndCommit: InsertTextAtSelection (no composition)\n");
         }
     }
 }
 
 void TsfInputClient::insert_text(const std::string& utf8) {
+    FIRE_LOG(L"[FireIME] insert_text: '%hs'\n", utf8.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     EndCompositionAndCommit(w);
     hide_candidates();
 }
 
 void TsfInputClient::set_marked_text(const std::string& utf8) {
+    FIRE_LOG(L"[FireIME] set_marked_text: '%hs'\n", utf8.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     SetCompositionText(w);
 }
 
 void TsfInputClient::clear_marked_text() {
+    FIRE_LOG(L"[FireIME] clear_marked_text: composition=%p\n", (void*)composition_);
     if (composition_) {
         SetCompositionText(L"");
         composition_->EndComposition(session_.editCookie);
@@ -99,45 +113,64 @@ void TsfInputClient::clear_marked_text() {
 }
 
 fire::CaretRect TsfInputClient::get_caret_rect() {
+    FIRE_LOG_ENTER();
     fire::CaretRect rc;
-    if (!session_.pContext) return rc;
+    if (!session_.pContext) {
+        FIRE_LOG(L"[FireIME] get_caret_rect: pContext null\n");
+        return rc;
+    }
 
     ITfContextView* pView = nullptr;
-    if (FAILED(session_.pContext->GetActiveView(&pView)) || !pView) return rc;
+    if (FAILED(session_.pContext->GetActiveView(&pView)) || !pView) {
+        FIRE_LOG(L"[FireIME] get_caret_rect: GetActiveView FAILED/null\n");
+        return rc;
+    }
 
     ITfRange* pRange = nullptr;
     if (composition_) {
         composition_->GetRange(&pRange);
+        FIRE_LOG(L"[FireIME] get_caret_rect: from composition range=%p\n", (void*)pRange);
     } else {
         TF_SELECTION sel;
         ULONG fetched = 0;
         if (SUCCEEDED(session_.pContext->GetSelection(session_.editCookie, TF_DEFAULT_SELECTION,
                                                       1, &sel, &fetched)) && fetched) {
             pRange = sel.range;
+            FIRE_LOG(L"[FireIME] get_caret_rect: from selection range=%p\n", (void*)pRange);
         }
     }
     if (pRange) {
         RECT r = {0};
         BOOL clipped = FALSE;
-        if (SUCCEEDED(pView->GetTextExt(session_.editCookie, pRange, &r, &clipped))) {
+        HRESULT hr = pView->GetTextExt(session_.editCookie, pRange, &r, &clipped);
+        FIRE_LOG_HR(hr, L"GetTextExt");
+        if (SUCCEEDED(hr)) {
             rc.x = r.left;
             rc.y = r.top;
             rc.width = r.right - r.left;
             rc.height = r.bottom - r.top;
+            FIRE_LOG(L"[FireIME] get_caret_rect: rect=(%d,%d,%dx%d) clipped=%d\n",
+                     rc.x, rc.y, rc.width, rc.height, clipped ? 1 : 0);
         }
         pRange->Release();
     }
     pView->Release();
+    FIRE_LOG_EXIT();
     return rc;
 }
 
 std::string TsfInputClient::get_previous_text() {
+    FIRE_LOG_ENTER();
     // 读取光标前一个字符：从选区起点向前扩展 1 个字符再取文本。
-    if (!session_.pContext) return {};
+    if (!session_.pContext) {
+        FIRE_LOG(L"[FireIME] get_previous_text: pContext null\n");
+        return {};
+    }
     TF_SELECTION sel;
     ULONG fetched = 0;
     if (FAILED(session_.pContext->GetSelection(session_.editCookie, TF_DEFAULT_SELECTION,
                                                1, &sel, &fetched)) || !fetched) {
+        FIRE_LOG(L"[FireIME] get_previous_text: GetSelection failed/no fetch\n");
         return {};
     }
     std::string result;
@@ -165,28 +198,39 @@ std::string TsfInputClient::get_previous_text() {
         }
     }
     pRange->Release();
+    FIRE_LOG(L"[FireIME] get_previous_text: result='%hs'\n", result.c_str());
+    FIRE_LOG_EXIT();
     return result;
 }
 
 std::string TsfInputClient::bundle_id() {
+    FIRE_LOG_ENTER();
     // 用宿主进程的可执行名作为“应用标识”（对应 macOS 的 bundleIdentifier）
     wchar_t path[MAX_PATH] = {0};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring w(path);
     size_t pos = w.find_last_of(L"\\/");
     if (pos != std::wstring::npos) w = w.substr(pos + 1);
-    return KeyEventTranslator::Utf16ToUtf8(w);
+    std::string id = KeyEventTranslator::Utf16ToUtf8(w);
+    FIRE_LOG(L"[FireIME] bundle_id: '%hs'\n", id.c_str());
+    FIRE_LOG_EXIT();
+    return id;
 }
 
 void TsfInputClient::show_candidates(const fire::CandidatesView& view) {
+    FIRE_LOG(L"[FireIME] show_candidates: cand=%p list_size=%zu origin='%hs'\n",
+             (void*)candWindow_, view.list.size(), view.original_string.c_str());
     if (candWindow_) candWindow_->Show(view);
 }
 
 void TsfInputClient::hide_candidates() {
+    FIRE_LOG(L"[FireIME] hide_candidates: cand=%p\n", (void*)candWindow_);
     if (candWindow_) candWindow_->Hide();
 }
 
 void TsfInputClient::show_input_mode_toast(const std::string& label) {
+    FIRE_LOG(L"[FireIME] show_input_mode_toast: label='%hs' cand=%p\n",
+             label.c_str(), (void*)candWindow_);
     if (candWindow_) candWindow_->ShowToast(label);
 }
 

@@ -6,6 +6,11 @@
 #include <windows.h>
 #include <msctf.h>
 
+// ATL Module 初始化/终止化（实现在 Globals.cpp）
+// DllMain 调用这两个函数，避免在头文件暴露 ATL Module 完整定义。
+HRESULT FireAtlModuleInit(HINSTANCE hInst);
+void FireAtlModuleTerm();
+
 // 业火输入法 Text Service 的 CLSID（部署前请用 guidgen 重新生成，避免与他人冲突）
 // {8E9F0B21-3C4D-4E5A-9B7C-1F2A3B4C5D6E}
 extern const CLSID CLSID_FireTextService;
