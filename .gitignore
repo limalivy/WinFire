@@ -49,6 +49,10 @@ test_*.sqlite
 *.sqlite-shm
 test_stats_export.csv
 
+# ---- Installer build artifacts ----
+installer/staging/
+dist/
+
 # ---- macOS ----
 .DS_Store
 
