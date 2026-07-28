@@ -1,4 +1,4 @@
-# winFire — 业火五笔输入法 Windows 移植
+# WinFire — 微火五笔输入法 Windows 移植（移植自业火五笔 Fire）
 
 将 macOS 上的「业火五笔输入法（Fire）」（Swift + InputMethodKit + SwiftUI + SQLCipher）
 重新实现到 Windows 平台。核心策略是**抽离平台无关内核**（状态机 + 词库），
@@ -23,7 +23,8 @@ ATL 纯原生 COM）。DLL 内 TSF 适配层把 Windows 消息翻译成 `fire::K
 ```
 winFire/
 ├── CMakeLists.txt              # 仅构建跨平台内核 + 测试 + tablebuilder（macOS 可验证）
-├── agents.md                   # 本文档
+├── AGENTS.md                   # 本文档
+├── README.md                   # 项目说明（含致谢与功能介绍）
 ├── core/                       # 跨平台内核（纯 C++17，不依赖 Windows / macOS API）
 │   ├── include/fire/
 │   │   ├── types.h             # 枚举 + 默认标点表           <- Fire/types.swift
@@ -46,10 +47,19 @@ winFire/
 │   ├── test_engine.cpp
 │   ├── test_input_mode_cache.cpp
 │   └── test_statistics.cpp
-└── windows/                    # Windows 平台层
-    ├── tsf/                    # ATL TSF TIP DLL
-    ├── candidate_window/       # Win32 + GDI+ 候选窗
-    └── config/                 # MFC 配置界面
+├── windows/                    # Windows 平台层
+│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
+│   ├── candidate_window/       # Win32 + GDI+ 候选窗
+│   └── config/                 # MFC 配置界面（fire_config.exe）
+├── installer/                  # Inno Setup 脚本与预构建资源
+│   ├── winfire.iss             # 安装包脚本
+│   └── staging/                # 预构建词库 + 默认 config.json（随包分发）
+├── scripts/                    # PowerShell 构建/安装/卸载脚本
+│   ├── build_installer.ps1     # 一键编译 + 生成 WinFire-Setup.exe
+│   ├── install.ps1             # 直接部署（不走 installer，需管理员）
+│   └── uninstall.ps1           # 反注册 + 删除程序文件（用户数据可选）
+├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）
+└── third_party/sqlite3/        # sqlite3 源码（直接编译进 DLL/EXE）
 ```
 
 ## 3. macOS -> 跨平台内核 模块映射
@@ -119,7 +129,9 @@ spaceKey -> punctuation
 
 ## 5. 构建与验证
 
-只有内核（`core/` + `tablebuilder/` + `tests/`）通过 CMake 构建，可在 macOS 上验证：
+### 5.1 跨平台内核（CMake，可在 macOS / Linux 验证）
+
+只有内核（`core/` + `tablebuilder/` + `tests/`）通过 CMake 构建：
 
 ```bash
 cmake -S . -B build
@@ -130,8 +142,35 @@ cd build && ctest --output-on-failure
 CMake 选项（默认 ON）：`BUILD_CORE` / `BUILD_TESTS` / `BUILD_TABLEBUILDER`。
 sqlite3 从系统 SDK / homebrew 定位（`find_package(SQLite3)`，回退 `-lsqlite3`）。
 
-Windows 层（`windows/`）不参与 CMake，不做编译验证——需在 Windows + Visual Studio
-（含 ATL/MFC 组件、Windows SDK）中用各自的工程构建。
+### 5.2 Windows 层（MSBuild，需 VS2022 + ATL/MFC + Windows SDK 10）
+
+```powershell
+# 编译 TSF TIP DLL（fire_tsf.dll）
+MSBuild.exe windows\tsf\fire_tsf.vcxproj /p:Configuration=Release /p:Platform=x64
+
+# 编译配置工具 EXE（fire_config.exe）
+MSBuild.exe windows\config\fire_config.vcxproj /p:Configuration=Release /p:Platform=x64
+
+# 构建 tablebuilder.exe（生成预构建词库用）
+cmake -S . -B build -DBUILD_TABLEBUILDER=ON
+cmake --build build --target tablebuilder --config Release
+```
+
+注意：`windows/config/ConfigApp.rc` 含 UTF-8 中文，文件首行已加 `#pragma code_page(65001)`
+声明，避免 rc.exe 用系统 GBK 误解析。
+
+### 5.3 安装包（Inno Setup 6）
+
+```powershell
+# 一键流程：MSBuild 编译 → tablebuilder 预构建词库 → ISCC 编译 winfire.iss
+powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
+
+# 仅编译 installer（跳过 VS 编译，使用现有产物）
+powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
+```
+
+产物：`dist\WinFire-Setup.exe`（单文件 installer，含卸载器）。
+安装目标：`%ProgramFiles%\WinFire\`（程序文件） + `%APPDATA%\WinFire\`（用户数据）。
 
 ## 6. Windows 层落地要点
 
@@ -145,22 +184,39 @@ Windows 层（`windows/`）不参与 CMake，不做编译验证——需在 Wind
   `bundle_id`（宿主进程名）、`show_candidates`/`hide_candidates`（驱动候选窗）。
 - 中英文切换：`ModifierKeyUpChecker` 等价实现，检测 Shift 单击后置位 `toggle_input_mode_request`。
 - 语言栏按钮（`LangBarButton.h/.cpp`，`ITfLangBarItemButton` + `ITfSource`）替代 macOS 状态栏图标：
-  显示「中/英」，左键切换、菜单直选中/英；`Activate/Deactivate` 通过 `ITfLangBarItemMgr` 注册/注销。
+  显示「中/英」，左键切换、菜单直选中/英；tooltip 为「微火五笔：点击切换中/英文」；
+  `Activate/Deactivate` 通过 `ITfLangBarItemMgr` 注册/注销。
 - 输入统计：`Activate` 时若开启统计开关则创建 `fire::Statistics` 并注册引擎回调写库。
 - 按应用输入模式：`OnSetFocus(ITfDocumentMgr*)` 按 `bundle_id()`（宿主 exe 名）做 restore/save。
 - 全量配置：`LoadConfigFromDisk` 调用 `firecfg::ConfigStore::Load` 读取 `config.json`。
+- **SEH 崩溃保护**：`ActivateEx` 通过 `InitEngineSafe()`（`__try/__except` 包裹 `InitEngine`）
+  防止引擎初始化崩溃导致宿主进程（QQ/Word/Chrome…）整体挂掉；崩溃时记录日志并返回 `E_FAIL`，
+  宿主进程会优雅降级为不加载输入法。
+- **数据目录布局**（命名统一后）：
+  - 程序文件：`%ProgramFiles%\WinFire\`（fire_tsf.dll、fire_config.exe、tables\）
+  - 用户数据：`%APPDATA%\WinFire\`（config.json、user-dict.txt、wb_py_dict.sqlite、statistics.sqlite）
+  - 调试日志（仅 Debug 版）：`%LOCALAPPDATA%\WinFire\logs\fire_tsf_<pid>.log`
 
 ### 6.2 候选窗（Win32 + GDI+ 自绘，windows/candidate_window/）
 - 无焦点浮窗：`WS_POPUP`，扩展样式 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，
   `WM_MOUSEACTIVATE` 返回 `MA_NOACTIVATE`。
-- GDI+ 绘制组字区、候选列表（横/竖）、序号、编码、翻页指示；主题色取自 `ThemeConfig`。
+- GDI+ 绘制组字区、候选列表（横/竖可切换）、序号、编码、翻页指示；主题色取自 `ThemeConfig`。
 - 定位：根据 `CaretRect` 放在光标下方，越界时翻转到上方/贴边。
+- **DPI 自适应**：`Measure` 阶段调用 `GetDpiForWindow` 取系统缩放，所有尺寸/字号按 DPI scale 倍率计算，
+  避免 HiDPI 屏下候选窗过小。
+- **候选个数可配置**：3-9，由 `config.candidate_count` 控制。
+- **翻页**：`-` / `=` 或 PageUp / PageDown，由 handler 链的 `pageKey` 段处理。
+- **⚙ 菜单图标**：候选窗右上角绘制齿轮图标，点击启动 `fire_config.exe`（通过 `ShellExecute`，
+  自动定位同目录下的配置工具），便于用户快速进入设置而无需到开始菜单查找。
 
 ### 6.3 配置界面（MFC，windows/config/）
-- 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理（导入/构建）。
+- 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理。
   - 输入设置：词组/动态调频/反查/显示编码/五笔编码提示/唯一候选自动上屏/候选个数/编码方案/候选方向/顶字/中英切换键。
+  - 标点与中英文：标点模式（中文 / 英文）、中英切换键。
   - 按应用模式：`keep_app_input_mode`、模式提示时机、应用固定输入模式列表（增删）。
   - 输入统计：统计开关、累计字数、不同词条数、字词频列表、清除/仅清字词频/导出 CSV。
+  - **词库管理**：导入码表（选择 `wb_table.txt` / `wb_98_table.txt` / `py_table.txt`）、
+    重建词库（调用 `tablebuilder` 生成 `wb_py_dict.sqlite`）、编辑用户词库（`user-dict.txt`）。
 - 读写 `config.json`；调用 `tablebuilder` 生成 `wb_py_dict.sqlite`；编辑 `user-dict.txt`。
 - 注：主题设置、CLI 暂未实现。
 
