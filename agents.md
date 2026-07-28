@@ -1,4 +1,4 @@
-# my_win_input — 业火五笔输入法 Windows 移植
+# winFire — 业火五笔输入法 Windows 移植
 
 将 macOS 上的「业火五笔输入法（Fire）」（Swift + InputMethodKit + SwiftUI + SQLCipher）
 重新实现到 Windows 平台。核心策略是**抽离平台无关内核**（状态机 + 词库），
@@ -21,7 +21,7 @@ ATL 纯原生 COM）。DLL 内 TSF 适配层把 Windows 消息翻译成 `fire::K
 ## 2. 目录结构
 
 ```
-my_win_input/
+winFire/
 ├── CMakeLists.txt              # 仅构建跨平台内核 + 测试 + tablebuilder（macOS 可验证）
 ├── agents.md                   # 本文档
 ├── core/                       # 跨平台内核（纯 C++17，不依赖 Windows / macOS API）
