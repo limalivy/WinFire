@@ -136,4 +136,6 @@ winFire/
 
 ## 许可与致谢
 
+本项目采用 [MIT License](LICENSE) 开源，版权人：WinFire Project Contributors。
+
 本项目继承业火输入法的开源精神。再次感谢 [@qwertyyb](https://github.com/qwertyyb) 与 [业火五笔输入法（Fire）](https://github.com/qwertyyb/Fire) 项目，是 WinFire 的源头与基础。如对原始 macOS 版本感兴趣，欢迎前往原作者仓库支持。
