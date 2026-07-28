@@ -30,6 +30,10 @@
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\config;$(ProjectDir)..\..\third_party\sqlite3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <!-- 静态链接 CRT（/MT）：TSF 作为 in-process DLL 加载到各种宿主进程
+           （QQ/Word/Chrome…），必须静态链接避免与宿主的 CRT 版本冲突。
+           ATL Static 模式也要求 CRT 静态链接。 -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -37,7 +41,7 @@
       <AdditionalDependencies>gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <!-- Debug 配置：开启 FIRE_DEBUG 日志 -->
+  <!-- Debug 配置：开启 FIRE_DEBUG 日志（仍用 /MT 静态链接，不依赖 Debug CRT DLL） -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
       <PreprocessorDefinitions>FIRE_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
