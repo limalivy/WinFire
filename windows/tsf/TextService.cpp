@@ -136,15 +136,23 @@ void CFireTextService::LoadConfigFromDisk() {
 }
 
 void CFireTextService::InitEngine() {
+    OutputDebugStringW(L"[FireIME] InitEngine: begin\n");
+
     LoadConfigFromDisk();
+    OutputDebugStringW(L"[FireIME] InitEngine: config loaded\n");
+
     dict_ = std::make_unique<fire::DictManager>(config_);
+    OutputDebugStringW(L"[FireIME] InitEngine: DictManager created\n");
+
     engine_ = std::make_unique<fire::InputEngine>(config_, *dict_, inputClient_);
+    OutputDebugStringW(L"[FireIME] InitEngine: InputEngine created\n");
 
     // 注入组字终止回调 sink：宿主主动结束组字时经 OnCompositionTerminated 通知本 TIP。
     inputClient_.SetCompositionSink(static_cast<ITfCompositionSink*>(this));
 
     // 输入统计库（同步写入）。仅在开启任一统计开关时才创建。
     if (config_.enable_statistics || config_.enable_hanzi_frequency_statistics) {
+        OutputDebugStringW(L"[FireIME] InitEngine: creating Statistics\n");
         stats_ = std::make_unique<fire::Statistics>(config_.stats_db_path);
         engine_->set_candidate_inserted_callback([this](const fire::CandidateInsertedInfo& info) {
             if (stats_ && stats_->is_open()) {
@@ -156,8 +164,13 @@ void CFireTextService::InitEngine() {
         });
     }
 
+    OutputDebugStringW(L"[FireIME] InitEngine: creating CandidateWindow\n");
     candWindow_ = std::make_unique<CandidateWindowController>(config_);
-    candWindow_->Create(g_hInst);
+    if (!candWindow_->Create(g_hInst)) {
+        OutputDebugStringW(L"[FireIME] InitEngine: CandidateWindow::Create FAILED\n");
+    } else {
+        OutputDebugStringW(L"[FireIME] InitEngine: CandidateWindow created OK\n");
+    }
     inputClient_.SetCandidateWindow(candWindow_.get());
 
     // 候选窗点击/翻页回调回灌到引擎。鼠标路径不在按键 EditSession 内，必须重新
@@ -170,6 +183,8 @@ void CFireTextService::InitEngine() {
             if (delta > 0) engine_->next_page(); else engine_->prev_page();
         });
     });
+
+    OutputDebugStringW(L"[FireIME] InitEngine: complete\n");
 }
 
 // ---- ITfTextInputProcessor(Ex) ----
@@ -177,11 +192,28 @@ STDMETHODIMP CFireTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DW
     return Activate(ptim, tid);
 }
 
+// SEH 包装器：C2712 — __try 不能与需要栈展开的 C++ 对象共存，
+// 因此必须将 SEH 隔离在一个没有任何局部 C++ 对象的自由函数里。
+static bool InitEngineSafe(CFireTextService* svc) {
+    __try {
+        svc->InitEngine();
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        OutputDebugStringW(L"[FireIME] CRASH in InitEngine() — caught SEH exception, aborting Activate.\n");
+        return false;
+    }
+}
+
 STDMETHODIMP CFireTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     threadMgr_ = ptim;
     clientId_ = tid;
 
-    InitEngine();
+    if (!InitEngineSafe(this)) {
+        threadMgr_.Release();
+        threadMgr_ = nullptr;
+        clientId_ = TF_CLIENTID_NULL;
+        return E_FAIL;
+    }
 
     // 注册 ThreadMgrEventSink
     CComPtr<ITfSource> source;

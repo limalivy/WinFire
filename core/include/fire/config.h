@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <unordered_map>
 
 #include "fire/types.h"
 
@@ -87,7 +88,7 @@ struct Config {
 
     // 标点
     PunctuationMode punctuation_mode = PunctuationMode::ZhHans;
-    std::map<std::string, std::string> custom_punctuation_settings;  // 默认为 default_punctuation()
+    std::unordered_map<std::string, std::string> custom_punctuation_settings;  // 默认为 default_punctuation()
     bool enable_dot_after_number = true;        // 数字后 "。" 转 "."
     bool enable_punctuation_commit = true;      // 编码后标点先上屏首候选
     bool enable_whitespace_between_zh_en = true;

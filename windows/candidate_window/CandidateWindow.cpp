@@ -55,7 +55,11 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
     hInst_ = hInst;
 
     GdiplusStartupInput gi;
-    GdiplusStartup(&gdiplusToken_, &gi, nullptr);
+    if (GdiplusStartup(&gdiplusToken_, &gi, nullptr) != Gdiplus::Ok) {
+        OutputDebugStringW(L"[FireIME] CandidateWindow: GdiplusStartup FAILED\n");
+        gdiplusToken_ = 0;
+        return false;
+    }
 
     WNDCLASSEXW wc = {sizeof(wc)};
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -63,6 +67,7 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
     wc.hInstance = hInst;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.lpszClassName = kClassName;
+    // RegisterClassExW 可能因类已注册（同一进程重复激活）返回 0，不算失败。
     RegisterClassExW(&wc);
 
     // 无焦点浮窗：TOPMOST + NOACTIVATE + TOOLWINDOW + LAYERED（用 UpdateLayeredWindow 逐像素透明）
@@ -70,7 +75,11 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
         WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         kClassName, L"", WS_POPUP,
         0, 0, 10, 10, nullptr, nullptr, hInst, this);
-    return hwnd_ != nullptr;
+    if (!hwnd_) {
+        OutputDebugStringW(L"[FireIME] CandidateWindow: CreateWindowExW FAILED\n");
+        return false;
+    }
+    return true;
 }
 
 void CandidateWindowController::Destroy() {

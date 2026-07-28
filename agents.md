@@ -8,7 +8,7 @@ Windows 平台各层只做「宿主适配 + UI 渲染」。
 
 - **TSF COM 骨架 → ATL（纯原生 COM）**：`windows/tsf/`
 - **候选窗 → 纯 VC/Win32 + GDI+ 自绘**：`windows/candidate_window/`
-- **状态机 + 词库 → 现代 C++17 跨平台内核**：`core/`（本仓库唯一需要编译验证的模块）
+- **状态机 + 词库 → 现代 C++17 跨平台内核**：`core/`
 - **配置界面 → MFC**：`windows/config/`
 - **词库构建工具**：`tablebuilder/`
 
@@ -46,7 +46,7 @@ winFire/
 │   ├── test_engine.cpp
 │   ├── test_input_mode_cache.cpp
 │   └── test_statistics.cpp
-└── windows/                    # Windows 平台层（不参与 CMake，不做编译验证）
+└── windows/                    # Windows 平台层
     ├── tsf/                    # ATL TSF TIP DLL
     ├── candidate_window/       # Win32 + GDI+ 候选窗
     └── config/                 # MFC 配置界面

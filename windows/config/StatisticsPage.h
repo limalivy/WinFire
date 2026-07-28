@@ -5,7 +5,10 @@
 //  支持清除统计 / 仅清除字词频 / 导出 CSV，并开关统计功能。
 //
 #pragma once
+#ifndef RC_INVOKED
 #include <afxdlgs.h>
+#include <afxcmn.h>
+#endif
 
 #define IDD_PAGE_STATS           2005
 #define IDC_CHK_ENABLE_STATS     2501

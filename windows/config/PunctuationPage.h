@@ -2,9 +2,12 @@
 //  PunctuationPage.h — “标点与中英文”属性页
 //
 #pragma once
+#ifndef RC_INVOKED
 #include <afxdlgs.h>
-#include <map>
+#include <afxcmn.h>
+#endif
 #include <string>
+#include <unordered_map>
 
 #define IDD_PAGE_PUNCT           2002
 #define IDC_CMB_PUNCT_MODE       2201
@@ -45,7 +48,7 @@ protected:
 
 private:
     // 当前编辑中的自定义标点映射（原字符 -> 输出），Apply 时写回 g_config。
-    std::map<std::string, std::string> m_customPunct;
+    std::unordered_map<std::string, std::string> m_customPunct;
     void ReloadList();
     void UpdateCustomUIEnabled();
 };

@@ -161,7 +161,7 @@ void ParseAppSettings(const std::string& json,
 
 // 解析 "customPunctuation": [ {"k":"，","v":"，"}, ... ] 到 map。
 void ParseCustomPunctuation(const std::string& json,
-                            std::map<std::string, std::string>& out) {
+                            std::unordered_map<std::string, std::string>& out) {
     std::string k = "\"customPunctuation\"";
     size_t p = json.find(k);
     if (p == std::string::npos) return;

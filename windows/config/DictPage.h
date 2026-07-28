@@ -2,7 +2,9 @@
 //  DictPage.h — “词库管理”属性页（导入码表 / 生成 sqlite / 编辑用户词库）
 //
 #pragma once
+#ifndef RC_INVOKED
 #include <afxdlgs.h>
+#endif
 
 #define IDD_PAGE_DICT            2003
 #define IDC_EDIT_WB_TABLE        2301

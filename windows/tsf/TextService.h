@@ -119,6 +119,7 @@ private:
 
     friend class KeyEditSession;    // 内部按键 EditSession 实现
     friend class ActionEditSession;  // 内部通用动作 EditSession 实现
+    friend bool InitEngineSafe(CFireTextService* svc);  // SEH 崩溃保护包装器
 };
 
 }  // namespace firewin

@@ -5,7 +5,10 @@
 //  设置固定输入模式，并可开启“保持应用最后使用的输入模式”。
 //
 #pragma once
+#ifndef RC_INVOKED
 #include <afxdlgs.h>
+#include <afxcmn.h>
+#endif
 
 #define IDD_PAGE_APPMODE         2004
 #define IDC_CHK_KEEP_APP_MODE    2401

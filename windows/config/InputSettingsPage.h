@@ -2,7 +2,9 @@
 //  InputSettingsPage.h — “输入设置”属性页
 //
 #pragma once
+#ifndef RC_INVOKED
 #include <afxdlgs.h>
+#endif
 
 // 控件 ID（对应 .rc 中的资源）
 #define IDD_PAGE_INPUT           2001
