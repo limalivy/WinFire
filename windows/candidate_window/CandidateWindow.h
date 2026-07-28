@@ -49,6 +49,7 @@ private:
 
     fire::CandidatesView view_;
     std::vector<RECT> candidateRects_;  // 命中测试用
+    RECT menuRect_ = {0, 0, 0, 0};      // ⚙ 菜单图标命中区域
     bool visible_ = false;
     bool darkMode_ = false;             // 当前渲染使用的深色模式（每次 Show 时刷新一次）
     POINT lastPos_ = {0, 0};            // 上次窗口左上角（UpdateLayeredWindow 需要）
@@ -64,7 +65,8 @@ private:
     void PaintToGraphics(Gdiplus::Graphics& g, const SIZE& sz);  // 在离屏 Graphics 上绘制内容
     SIZE Measure();               // 依据 view_ 计算窗口尺寸
     POINT ComputePosition(const SIZE& sz);  // 依据 caret 计算窗口左上角
-    int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中
+    int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中，-2 命中菜单图标
+    void LaunchConfigTool();          // 启动 fire_config.exe
 
     static bool IsDarkMode();
 

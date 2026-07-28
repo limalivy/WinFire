@@ -175,7 +175,9 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
             POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             int idx = HitTest(pt);
             FIRE_LOG(L"[FireIME] WM_LBUTTONUP: idx=%d list_size=%zu\n", idx, view_.list.size());
-            if (idx >= 0 && idx < (int)view_.list.size() && onSelect_) {
+            if (idx == -2) {
+                LaunchConfigTool();
+            } else if (idx >= 0 && idx < (int)view_.list.size() && onSelect_) {
                 onSelect_(view_.list[idx]);
             }
             return 0;
@@ -276,6 +278,27 @@ SIZE CandidateWindowController::Measure() {
             totalH = y;
         }
         candidateRects_.push_back(r);
+    }
+
+    // 菜单图标 ⚙ 追加在候选列表末尾（横向：右侧；竖向：下方独占一行）
+    {
+        const wchar_t kMenuIcon[] = L"\u2699";
+        SizeF menuSz = measure(kMenuIcon);
+        RECT r;
+        if (horizontal) {
+            r.left = (LONG)x; r.top = (LONG)y;
+            r.right = (LONG)(x + menuSz.Width);
+            r.bottom = (LONG)(y + menuSz.Height);
+            rowW = (std::max)(rowW, x + menuSz.Width);
+            totalH = (std::max)(totalH, y + menuSz.Height);
+        } else {
+            r.left = (LONG)padL; r.top = (LONG)y;
+            r.right = (LONG)(padL + menuSz.Width);
+            r.bottom = (LONG)(y + menuSz.Height);
+            rowW = (std::max)(rowW, padL + menuSz.Width);
+            totalH = y + menuSz.Height;
+        }
+        menuRect_ = r;
     }
 
     maxW = (std::max)(maxW, rowW - padL);
@@ -388,6 +411,13 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
                          selected ? &selCodeBrush : &codeBrush);
         }
     }
+
+    // 菜单图标 ⚙（用序号同色，低调显示）
+    const wchar_t kMenuIcon[] = L"\u2699";
+    SolidBrush menuBrush(ToColor(ap.candidate_index_color));
+    g.DrawString(kMenuIcon, 1, &font,
+                 PointF((REAL)menuRect_.left, (REAL)menuRect_.top),
+                 &menuBrush);
 }
 
 void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
@@ -498,7 +528,29 @@ int CandidateWindowController::HitTest(POINT pt) const {
             return (int)i;
         }
     }
+    // 菜单图标命中
+    if (pt.x >= menuRect_.left && pt.x <= menuRect_.right &&
+        pt.y >= menuRect_.top && pt.y <= menuRect_.bottom) {
+        return -2;
+    }
     return -1;
+}
+
+void CandidateWindowController::LaunchConfigTool() {
+    // fire_tsf.dll 与 fire_config.exe 同目录：获取 DLL 路径后替换末段文件名
+    HMODULE hSelf = GetModuleHandleW(L"fire_tsf.dll");
+    wchar_t dllPath[MAX_PATH] = {0};
+    if (!hSelf || !GetModuleFileNameW(hSelf, dllPath, MAX_PATH)) {
+        FIRE_LOG(L"[FireIME] LaunchConfigTool: GetModuleFileName FAILED err=%lu\n", GetLastError());
+        return;
+    }
+    std::wstring path(dllPath);
+    size_t pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) return;
+    path = path.substr(0, pos + 1) + L"fire_config.exe";
+    HINSTANCE h = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    FIRE_LOG(L"[FireIME] LaunchConfigTool: launch '%ls' hinst=%p err=%lu\n",
+             path.c_str(), (void*)h, GetLastError());
 }
 
 }  // namespace firewin
