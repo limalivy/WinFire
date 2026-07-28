@@ -98,16 +98,36 @@ static void build_wb_py_dict() {
         sqlite3_exec(db, "insert into sqlite_sequence(name, seq) values('wb_py_dict', 100000)",
                      nullptr, nullptr, nullptr);
     }
-    const char* sql =
-        "insert into wb_py_dict(wbcode, text, type, query) "
-        "select code as wbcode, text, 'wb' as type, code as query from wb_dict; "
-        "insert into wb_py_dict(wbcode, text, type, query) "
-        "select wb.code as wbcode, py.text as text, 'py' as type, py.code as query "
-        "from py_dict py inner join wb_dict wb on py.text = wb.text order by py.id;";
-    rc = sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
-    if (rc != SQLITE_OK) {
-        cout << "initilize wb_py_dict failure: " << sqlite3_errmsg(db) << endl;
+
+    bool hasWb = table_exists(db, "wb_dict");
+    bool hasPy = table_exists(db, "py_dict");
+    if (!hasWb && !hasPy) {
+        cout << "combine failure: neither wb_dict nor py_dict exists in db" << endl;
         exit(1);
+    }
+    // 只在对应源表存在时才执行导入，避免因缺表（no such table）报错。
+    if (hasWb) {
+        rc = sqlite3_exec(db,
+                          "insert into wb_py_dict(wbcode, text, type, query) "
+                          "select code as wbcode, text, 'wb' as type, code as query from wb_dict",
+                          nullptr, nullptr, nullptr);
+        if (rc != SQLITE_OK) {
+            cout << "initilize wb_py_dict (wb) failure: " << sqlite3_errmsg(db) << endl;
+            exit(1);
+        }
+    }
+    // 拼音条目需要五笔码作为 wbcode，故仅在两表都存在时按 text 关联导入。
+    if (hasWb && hasPy) {
+        rc = sqlite3_exec(
+            db,
+            "insert into wb_py_dict(wbcode, text, type, query) "
+            "select wb.code as wbcode, py.text as text, 'py' as type, py.code as query "
+            "from py_dict py inner join wb_dict wb on py.text = wb.text order by py.id",
+            nullptr, nullptr, nullptr);
+        if (rc != SQLITE_OK) {
+            cout << "initilize wb_py_dict (py) failure: " << sqlite3_errmsg(db) << endl;
+            exit(1);
+        }
     }
     rc = sqlite3_exec(db, "create index if not exists query_index on wb_py_dict(query)", nullptr,
                       nullptr, nullptr);

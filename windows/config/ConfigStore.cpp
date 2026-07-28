@@ -159,6 +159,31 @@ void ParseAppSettings(const std::string& json,
     }
 }
 
+// 解析 "customPunctuation": [ {"k":"，","v":"，"}, ... ] 到 map。
+void ParseCustomPunctuation(const std::string& json,
+                            std::map<std::string, std::string>& out) {
+    std::string k = "\"customPunctuation\"";
+    size_t p = json.find(k);
+    if (p == std::string::npos) return;
+    p = json.find('[', p);
+    if (p == std::string::npos) return;
+    size_t end = json.find(']', p);
+    if (end == std::string::npos) return;
+    std::string arr = json.substr(p + 1, end - p - 1);
+
+    size_t obj = 0;
+    while ((obj = arr.find('{', obj)) != std::string::npos) {
+        size_t oe = arr.find('}', obj);
+        if (oe == std::string::npos) break;
+        std::string item = arr.substr(obj, oe - obj + 1);
+        std::string key, val;
+        if (FindRaw(item, "k", key) && !key.empty() && FindRaw(item, "v", val)) {
+            out[key] = val;
+        }
+        obj = oe + 1;
+    }
+}
+
 }  // namespace
 
 bool ConfigStore::Load(fire::Config& c) {
@@ -203,6 +228,10 @@ bool ConfigStore::Load(fire::Config& c) {
     c.enable_statistics = GetBool(json, "enableStatistics", c.enable_statistics);
     c.enable_hanzi_frequency_statistics =
         GetBool(json, "enableHanziFrequencyStatistics", c.enable_hanzi_frequency_statistics);
+
+    // 自定义标点映射（仅在 punctuationMode=Custom 时使用）
+    c.custom_punctuation_settings.clear();
+    ParseCustomPunctuation(json, c.custom_punctuation_settings);
     return true;
 }
 
@@ -237,6 +266,14 @@ bool ConfigStore::Save(const fire::Config& c) {
         if (!first) o << ", ";
         first = false;
         o << "{\"app\": \"" << EscapeJson(kv.first) << "\", \"mode\": " << (int)kv.second << "}";
+    }
+    o << "],\n";
+    o << "  \"customPunctuation\": [";
+    first = true;
+    for (const auto& kv : c.custom_punctuation_settings) {
+        if (!first) o << ", ";
+        first = false;
+        o << "{\"k\": \"" << EscapeJson(kv.first) << "\", \"v\": \"" << EscapeJson(kv.second) << "\"}";
     }
     o << "]\n";
     o << "}\n";

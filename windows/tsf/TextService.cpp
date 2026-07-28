@@ -61,6 +61,50 @@ private:
     LONG ref_ = 1;
 };
 
+// ---- 通用动作 EditSession：候选窗点击/翻页等非按键路径的文档读写包装 ----
+// 这些路径（WM_LBUTTONUP / WM_MOUSEWHEEL）不在任何 EditSession 内，若直接改文档会
+// 复用上一次按键遗留的、已失效的 editCookie，被 TSF 拒绝导致上屏失败或组字悬空。
+class ActionEditSession : public ITfEditSession {
+public:
+    ActionEditSession(CFireTextService* svc, ITfContext* ctx, std::function<void()> action)
+        : svc_(svc), ctx_(ctx), action_(std::move(action)) {
+        ctx_->AddRef();
+    }
+    ~ActionEditSession() { ctx_->Release(); }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == IID_IUnknown || riid == IID_ITfEditSession) {
+            *ppv = static_cast<ITfEditSession*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&ref_); }
+    STDMETHODIMP_(ULONG) Release() override {
+        LONG r = InterlockedDecrement(&ref_);
+        if (r == 0) delete this;
+        return r;
+    }
+
+    STDMETHODIMP DoEditSession(TfEditCookie ec) override {
+        TsfEditSession s;
+        s.pContext = ctx_;
+        s.editCookie = ec;
+        s.clientId = svc_->clientId_;
+        svc_->inputClient_.SetEditContext(s);
+        if (action_) action_();
+        return S_OK;
+    }
+
+private:
+    CFireTextService* svc_;
+    ITfContext* ctx_;
+    std::function<void()> action_;
+    LONG ref_ = 1;
+};
+
 // ---- CFireTextService ----
 CFireTextService::CFireTextService() {
     DllAddRef();
@@ -116,12 +160,15 @@ void CFireTextService::InitEngine() {
     candWindow_->Create(g_hInst);
     inputClient_.SetCandidateWindow(candWindow_.get());
 
-    // 候选窗点击/翻页回调回灌到引擎
+    // 候选窗点击/翻页回调回灌到引擎。鼠标路径不在按键 EditSession 内，必须重新
+    // 申请一次读写 EditSession，拿到有效 editCookie 再操作文档，否则会用失效 cookie。
     candWindow_->SetOnSelect([this](const fire::Candidate& c) {
-        engine_->insert_candidate(c);
+        RunInEditSession([this, c]() { engine_->insert_candidate(c); });
     });
     candWindow_->SetOnPage([this](int delta) {
-        if (delta > 0) engine_->next_page(); else engine_->prev_page();
+        RunInEditSession([this, delta]() {
+            if (delta > 0) engine_->next_page(); else engine_->prev_page();
+        });
     });
 }
 
@@ -337,6 +384,20 @@ void CFireTextService::SetInputModeFromLangBar(fire::InputMode mode) {
 
 fire::InputMode CFireTextService::CurrentInputMode() const {
     return engine_ ? engine_->input_mode() : fire::InputMode::ZhHans;
+}
+
+void CFireTextService::RunInEditSession(std::function<void()> action) {
+    if (!threadMgr_ || !engine_) return;
+    // 取当前焦点文档的顶层上下文
+    CComPtr<ITfDocumentMgr> docMgr;
+    if (FAILED(threadMgr_->GetFocus(&docMgr)) || !docMgr) return;
+    CComPtr<ITfContext> ctx;
+    if (FAILED(docMgr->GetTop(&ctx)) || !ctx) return;
+
+    ActionEditSession* session = new ActionEditSession(this, ctx, std::move(action));
+    HRESULT hrSession = S_OK;
+    ctx->RequestEditSession(clientId_, session, TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
+    session->Release();
 }
 
 bool CFireTextService::ProcessKeyInEditSession(ITfContext* pic, const fire::KeyEvent& ev) {

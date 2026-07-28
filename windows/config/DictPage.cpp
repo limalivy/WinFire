@@ -71,11 +71,34 @@ static bool FileExists(const CString& path) {
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// 同步运行 tablebuilder 一个子命令；返回进程退出码（-1 表示无法启动）。
+static int RunBuilder(const std::wstring& builder, const CString& args) {
+    CString cmd;
+    cmd.Format(_T("\"%s\" %s"), builder.c_str(), (LPCTSTR)args);
+
+    STARTUPINFO si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    if (!CreateProcessW(nullptr, cmd.GetBuffer(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        cmd.ReleaseBuffer();
+        return -1;
+    }
+    cmd.ReleaseBuffer();
+    WaitProcessPumping(pi.hProcess);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int)code;
+}
+
 void CDictPage::OnBuildDict() {
     UpdateData(TRUE);
 
+    bool hasWb = FileExists(m_wbTablePath);
+    bool hasPy = FileExists(m_pyTablePath);
     // 构建前校验码表路径存在，避免把无效路径传给 tablebuilder。
-    if (!FileExists(m_wbTablePath) && !FileExists(m_pyTablePath)) {
+    if (!hasWb && !hasPy) {
         SetDlgItemText(IDC_STATIC_BUILD_STATUS, _T("请先选择存在的五笔或拼音码表文件"));
         return;
     }
@@ -85,35 +108,44 @@ void CDictPage::OnBuildDict() {
 
     std::wstring db = firecfg::GetDictDbPath();
 
-    // 调用 tablebuilder.exe（与配置程序同目录）生成词库。
-    // 约定命令行：tablebuilder <db> <wb_table.txt> <py_table.txt>
+    // tablebuilder.exe（与配置程序同目录）子命令协议：
+    //   --create-dict <txt> <table> <db>   码表 txt 导入指定表（wb_dict / py_dict）
+    //   --combine-dict <db>                合并 wb_dict + py_dict 生成内核使用的 wb_py_dict
     wchar_t exeDir[MAX_PATH] = {0};
     GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
     std::wstring dir(exeDir);
     dir = dir.substr(0, dir.find_last_of(L"\\/"));
     std::wstring builder = dir + L"\\tablebuilder.exe";
 
-    CString cmd;
-    cmd.Format(_T("\"%s\" \"%s\" \"%s\" \"%s\""),
-               builder.c_str(), db.c_str(), (LPCTSTR)m_wbTablePath, (LPCTSTR)m_pyTablePath);
+    // 每次构建从干净的库开始，避免 combine 重复插入历史数据。
+    DeleteFileW(db.c_str());
 
-    STARTUPINFO si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {0};
-    if (CreateProcessW(nullptr, cmd.GetBuffer(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        cmd.ReleaseBuffer();
-        WaitProcessPumping(pi.hProcess);
-        DWORD code = 0;
-        GetExitCodeProcess(pi.hProcess, &code);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        SetDlgItemText(IDC_STATIC_BUILD_STATUS,
-                       code == 0 ? _T("词库构建成功") : _T("词库构建失败"));
-        g_config.db_path = CT2A(CString(db.c_str()), CP_UTF8).m_psz;
-    } else {
-        cmd.ReleaseBuffer();
-        SetDlgItemText(IDC_STATIC_BUILD_STATUS, _T("无法启动 tablebuilder.exe"));
+    SetDlgItemText(IDC_STATIC_BUILD_STATUS, _T("正在构建词库…"));
+
+    auto fail = [&](const TCHAR* msg) { SetDlgItemText(IDC_STATIC_BUILD_STATUS, msg); };
+
+    CString args;
+    if (hasWb) {
+        args.Format(_T("--create-dict \"%s\" wb_dict \"%s\""), (LPCTSTR)m_wbTablePath, db.c_str());
+        int code = RunBuilder(builder, args);
+        if (code == -1) { fail(_T("无法启动 tablebuilder.exe")); return; }
+        if (code != 0) { fail(_T("五笔码表导入失败")); return; }
     }
+    if (hasPy) {
+        args.Format(_T("--create-dict \"%s\" py_dict \"%s\""), (LPCTSTR)m_pyTablePath, db.c_str());
+        int code = RunBuilder(builder, args);
+        if (code == -1) { fail(_T("无法启动 tablebuilder.exe")); return; }
+        if (code != 0) { fail(_T("拼音码表导入失败")); return; }
+    }
+
+    // 合并生成内核实际查询的 wb_py_dict 表。
+    args.Format(_T("--combine-dict \"%s\""), db.c_str());
+    int code = RunBuilder(builder, args);
+    if (code == -1) { fail(_T("无法启动 tablebuilder.exe")); return; }
+    if (code != 0) { fail(_T("词库合并失败")); return; }
+
+    g_config.db_path = CT2A(CString(db.c_str()), CP_UTF8).m_psz;
+    fail(_T("词库构建成功"));
 }
 
 void CDictPage::OnEditUserDict() {

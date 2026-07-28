@@ -13,6 +13,7 @@
 #include <msctf.h>
 #include <atlbase.h>
 #include <atlcom.h>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -109,10 +110,15 @@ private:
     // 在一次 EditSession 中处理按键（真正修改文档必须在 EditSession 内）
     bool ProcessKeyInEditSession(ITfContext* pic, const fire::KeyEvent& ev);
 
+    // 在当前焦点上下文的读写 EditSession 内执行一个动作（用于候选窗点击/翻页等
+    // 非按键路径：这些路径不在任何 EditSession 里，直接改文档会用到失效 cookie）。
+    void RunInEditSession(std::function<void()> action);
+
     // 判断是否需要吃掉该键（用于 OnTestKeyDown）：中文模式下的可见字符/功能键
     bool ShouldEat(const fire::KeyEvent& ev) const;
 
-    friend class KeyEditSession;  // 内部 EditSession 实现
+    friend class KeyEditSession;    // 内部按键 EditSession 实现
+    friend class ActionEditSession;  // 内部通用动作 EditSession 实现
 };
 
 }  // namespace firewin

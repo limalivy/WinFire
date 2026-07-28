@@ -33,7 +33,7 @@ BEGIN
 END
 
 //////////////////// 标点与中英文页 ////////////////////
-IDD_PAGE_PUNCT DIALOGEX 0, 0, 260, 200
+IDD_PAGE_PUNCT DIALOGEX 0, 0, 260, 232
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "标点与中英文"
 FONT 9, "MS Shell Dlg"
@@ -45,6 +45,12 @@ BEGIN
     CONTROL "禁止切换英文",           IDC_CHK_DISABLE_EN,    "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 72, 120, 12
     CONTROL "禁止 ; 键临时英文",      IDC_CHK_DISABLE_TEMP_EN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP, 12, 90, 140, 12
     CONTROL "中英文间自动加空格",     IDC_CHK_WS_ZH_EN,      "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 108, 160, 12
+    LTEXT   "自定义标点（仅自定义模式生效）:", IDC_STATIC,       12, 126, 200, 10
+    CONTROL "",                       IDC_LIST_CUSTOM_PUNCT, "SysListView32", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, 12, 138, 150, 88
+    LTEXT   "输出:",                  IDC_STATIC,            170, 140, 24, 10
+    EDITTEXT                          IDC_EDIT_PUNCT_VALUE,  170, 152, 78, 14, ES_AUTOHSCROLL
+    PUSHBUTTON "设置",               IDC_BTN_PUNCT_SET,     170, 170, 78, 16
+    PUSHBUTTON "恢复默认",           IDC_BTN_PUNCT_RESET,   170, 190, 78, 16
 END
 
 //////////////////// 按应用输入模式页 ////////////////////
