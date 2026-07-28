@@ -17,7 +17,7 @@ BEGIN_MESSAGE_MAP(CStatisticsPage, CPropertyPage)
 END_MESSAGE_MAP()
 
 namespace {
-// 统计库路径：默认 %APPDATA%\FireIME\statistics.sqlite
+// 统计库路径：默认 %APPDATA%\WinFire\statistics.sqlite
 std::string StatsDbPath() {
     if (!g_config.stats_db_path.empty()) return g_config.stats_db_path;
     std::wstring w = firecfg::GetConfigDir() + L"\\statistics.sqlite";

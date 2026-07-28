@@ -53,7 +53,7 @@ struct AppearanceThemeConfig {
 struct ThemeConfig {
     std::string id = "default";
     std::string name = "默认";
-    std::string author = "业火输入法";
+    std::string author = "微火输入法";
     AppearanceThemeConfig light;   // 浅色
     AppearanceThemeConfig dark;    // 深色
 

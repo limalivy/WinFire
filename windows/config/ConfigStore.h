@@ -11,7 +11,7 @@
 
 namespace firecfg {
 
-// 返回 %APPDATA%\FireIME 目录（不存在则创建）
+// 返回 %APPDATA%\WinFire 目录（不存在则创建）
 std::wstring GetConfigDir();
 std::wstring GetConfigJsonPath();
 std::wstring GetUserDictPath();

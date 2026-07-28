@@ -1,5 +1,5 @@
 //
-//  TextService.h — 业火输入法 TSF Text Input Processor（ATL 纯原生 COM）
+//  TextService.h — 微火输入法 TSF Text Input Processor（ATL 纯原生 COM）
 //
 //  实现的 TSF 接口：
 //    ITfTextInputProcessorEx  —— 激活/停用

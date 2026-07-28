@@ -16,9 +16,9 @@ std::wstring GetConfigDir() {
     wchar_t appdata[MAX_PATH] = {0};
     if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)) || appdata[0] == 0) {
         // 回退到当前目录，避免拼出以空字符串开头的非法路径。
-        return L".\\FireIME";
+        return L".\\WinFire";
     }
-    std::wstring dir = std::wstring(appdata) + L"\\FireIME";
+    std::wstring dir = std::wstring(appdata) + L"\\WinFire";
     CreateDirectoryW(dir.c_str(), nullptr);
     return dir;
 }

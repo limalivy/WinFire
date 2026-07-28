@@ -6,7 +6,7 @@
 #   2. 用 CMake 构建 tablebuilder.exe（生成预构建词库用）
 #   3. 用 tablebuilder 预构建 wb_py_dict.sqlite 到 installer\staging\
 #   4. 生成默认 config.json 到 installer\staging\
-#   5. 调用 ISCC.exe 编译 installer\winfire.iss -> dist\FireIME-Setup.exe
+#   5. 调用 ISCC.exe 编译 installer\winfire.iss -> dist\WinFire-Setup.exe
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File build_installer.ps1
@@ -169,7 +169,7 @@ if (-not (Test-Path $DistDir)) {
 & $iscc /Qp $issFile 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
 if ($LASTEXITCODE -ne 0) { throw "ISCC compilation failed" }
 
-$installer = Join-Path $DistDir "FireIME-Setup.exe"
+$installer = Join-Path $DistDir "WinFire-Setup.exe"
 if (Test-Path $installer) {
     $size = (Get-Item $installer).Length
     Write-Host ""
@@ -186,6 +186,6 @@ Write-Host "  Build Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Run installer:  $installer" -ForegroundColor White
-Write-Host "  Install target: $env:ProgramFiles\FireIME" -ForegroundColor White
-Write-Host "  User data:      $env:APPDATA\FireIME" -ForegroundColor White
+Write-Host "  Install target: $env:ProgramFiles\WinFire" -ForegroundColor White
+Write-Host "  User data:      $env:APPDATA\WinFire" -ForegroundColor White
 Write-Host ""

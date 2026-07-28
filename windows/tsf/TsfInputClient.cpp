@@ -12,7 +12,7 @@ namespace firewin {
 
 // 在组字区写文本：用 ITfInsertAtSelection 插入，并对新范围设置组字显示属性。
 void TsfInputClient::SetCompositionText(const std::wstring& text) {
-    FIRE_LOG(L"[FireIME] SetCompositionText: pContext=%p text_len=%zu composition=%p\n",
+    FIRE_LOG(L"[WinFire] SetCompositionText: pContext=%p text_len=%zu composition=%p\n",
              (void*)session_.pContext, text.size(), (void*)composition_);
     if (!session_.pContext) return;
 
@@ -62,7 +62,7 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
 }
 
 void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
-    FIRE_LOG(L"[FireIME] EndCompositionAndCommit: pContext=%p composition=%p text_len=%zu\n",
+    FIRE_LOG(L"[WinFire] EndCompositionAndCommit: pContext=%p composition=%p text_len=%zu\n",
              (void*)session_.pContext, (void*)composition_, text.size());
     if (!session_.pContext) return;
     ITfRange* pRange = nullptr;
@@ -73,7 +73,7 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
         composition_->EndComposition(session_.editCookie);
         composition_->Release();
         composition_ = nullptr;
-        FIRE_LOG(L"[FireIME] EndCompositionAndCommit: composition ended OK\n");
+        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: composition ended OK\n");
     } else if (!text.empty()) {
         // 无组字：直接在选区插入
         ITfInsertAtSelection* pInsert = nullptr;
@@ -84,26 +84,26 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
                                            (LONG)text.size(), &r);
             if (r) r->Release();
             pInsert->Release();
-            FIRE_LOG(L"[FireIME] EndCompositionAndCommit: InsertTextAtSelection (no composition)\n");
+            FIRE_LOG(L"[WinFire] EndCompositionAndCommit: InsertTextAtSelection (no composition)\n");
         }
     }
 }
 
 void TsfInputClient::insert_text(const std::string& utf8) {
-    FIRE_LOG(L"[FireIME] insert_text: '%hs'\n", utf8.c_str());
+    FIRE_LOG(L"[WinFire] insert_text: '%hs'\n", utf8.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     EndCompositionAndCommit(w);
     hide_candidates();
 }
 
 void TsfInputClient::set_marked_text(const std::string& utf8) {
-    FIRE_LOG(L"[FireIME] set_marked_text: '%hs'\n", utf8.c_str());
+    FIRE_LOG(L"[WinFire] set_marked_text: '%hs'\n", utf8.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     SetCompositionText(w);
 }
 
 void TsfInputClient::clear_marked_text() {
-    FIRE_LOG(L"[FireIME] clear_marked_text: composition=%p\n", (void*)composition_);
+    FIRE_LOG(L"[WinFire] clear_marked_text: composition=%p\n", (void*)composition_);
     if (composition_) {
         SetCompositionText(L"");
         composition_->EndComposition(session_.editCookie);
@@ -116,27 +116,27 @@ fire::CaretRect TsfInputClient::get_caret_rect() {
     FIRE_LOG_ENTER();
     fire::CaretRect rc;
     if (!session_.pContext) {
-        FIRE_LOG(L"[FireIME] get_caret_rect: pContext null\n");
+        FIRE_LOG(L"[WinFire] get_caret_rect: pContext null\n");
         return rc;
     }
 
     ITfContextView* pView = nullptr;
     if (FAILED(session_.pContext->GetActiveView(&pView)) || !pView) {
-        FIRE_LOG(L"[FireIME] get_caret_rect: GetActiveView FAILED/null\n");
+        FIRE_LOG(L"[WinFire] get_caret_rect: GetActiveView FAILED/null\n");
         return rc;
     }
 
     ITfRange* pRange = nullptr;
     if (composition_) {
         composition_->GetRange(&pRange);
-        FIRE_LOG(L"[FireIME] get_caret_rect: from composition range=%p\n", (void*)pRange);
+        FIRE_LOG(L"[WinFire] get_caret_rect: from composition range=%p\n", (void*)pRange);
     } else {
         TF_SELECTION sel;
         ULONG fetched = 0;
         if (SUCCEEDED(session_.pContext->GetSelection(session_.editCookie, TF_DEFAULT_SELECTION,
                                                       1, &sel, &fetched)) && fetched) {
             pRange = sel.range;
-            FIRE_LOG(L"[FireIME] get_caret_rect: from selection range=%p\n", (void*)pRange);
+            FIRE_LOG(L"[WinFire] get_caret_rect: from selection range=%p\n", (void*)pRange);
         }
     }
     if (pRange) {
@@ -149,7 +149,7 @@ fire::CaretRect TsfInputClient::get_caret_rect() {
             rc.y = r.top;
             rc.width = r.right - r.left;
             rc.height = r.bottom - r.top;
-            FIRE_LOG(L"[FireIME] get_caret_rect: rect=(%d,%d,%dx%d) clipped=%d\n",
+            FIRE_LOG(L"[WinFire] get_caret_rect: rect=(%d,%d,%dx%d) clipped=%d\n",
                      rc.x, rc.y, rc.width, rc.height, clipped ? 1 : 0);
         }
         pRange->Release();
@@ -163,14 +163,14 @@ std::string TsfInputClient::get_previous_text() {
     FIRE_LOG_ENTER();
     // 读取光标前一个字符：从选区起点向前扩展 1 个字符再取文本。
     if (!session_.pContext) {
-        FIRE_LOG(L"[FireIME] get_previous_text: pContext null\n");
+        FIRE_LOG(L"[WinFire] get_previous_text: pContext null\n");
         return {};
     }
     TF_SELECTION sel;
     ULONG fetched = 0;
     if (FAILED(session_.pContext->GetSelection(session_.editCookie, TF_DEFAULT_SELECTION,
                                                1, &sel, &fetched)) || !fetched) {
-        FIRE_LOG(L"[FireIME] get_previous_text: GetSelection failed/no fetch\n");
+        FIRE_LOG(L"[WinFire] get_previous_text: GetSelection failed/no fetch\n");
         return {};
     }
     std::string result;
@@ -198,7 +198,7 @@ std::string TsfInputClient::get_previous_text() {
         }
     }
     pRange->Release();
-    FIRE_LOG(L"[FireIME] get_previous_text: result='%hs'\n", result.c_str());
+    FIRE_LOG(L"[WinFire] get_previous_text: result='%hs'\n", result.c_str());
     FIRE_LOG_EXIT();
     return result;
 }
@@ -212,24 +212,24 @@ std::string TsfInputClient::bundle_id() {
     size_t pos = w.find_last_of(L"\\/");
     if (pos != std::wstring::npos) w = w.substr(pos + 1);
     std::string id = KeyEventTranslator::Utf16ToUtf8(w);
-    FIRE_LOG(L"[FireIME] bundle_id: '%hs'\n", id.c_str());
+    FIRE_LOG(L"[WinFire] bundle_id: '%hs'\n", id.c_str());
     FIRE_LOG_EXIT();
     return id;
 }
 
 void TsfInputClient::show_candidates(const fire::CandidatesView& view) {
-    FIRE_LOG(L"[FireIME] show_candidates: cand=%p list_size=%zu origin='%hs'\n",
+    FIRE_LOG(L"[WinFire] show_candidates: cand=%p list_size=%zu origin='%hs'\n",
              (void*)candWindow_, view.list.size(), view.original_string.c_str());
     if (candWindow_) candWindow_->Show(view);
 }
 
 void TsfInputClient::hide_candidates() {
-    FIRE_LOG(L"[FireIME] hide_candidates: cand=%p\n", (void*)candWindow_);
+    FIRE_LOG(L"[WinFire] hide_candidates: cand=%p\n", (void*)candWindow_);
     if (candWindow_) candWindow_->Hide();
 }
 
 void TsfInputClient::show_input_mode_toast(const std::string& label) {
-    FIRE_LOG(L"[FireIME] show_input_mode_toast: label='%hs' cand=%p\n",
+    FIRE_LOG(L"[WinFire] show_input_mode_toast: label='%hs' cand=%p\n",
              label.c_str(), (void*)candWindow_);
     if (candWindow_) candWindow_->ShowToast(label);
 }

@@ -1,5 +1,5 @@
 #
-# my_win_input — 业火五笔输入法 Windows 移植
+# my_win_input — 微火五笔输入法 Windows 移植
 #
 # 跨平台内核（状态机 + 词库）用 CMake 构建，可在 macOS 上编译并运行 ctest 验证。
 # Windows 层（TSF/ATL、Win32/GDI+ 候选窗、MFC 配置界面）不参与 CMake。

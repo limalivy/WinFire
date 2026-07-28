@@ -19,7 +19,7 @@ BOOL CFireConfigApp::InitInstance() {
     // 载入磁盘配置（不存在则用默认值）
     firecfg::ConfigStore::Load(g_config);
 
-    CPropertySheet sheet(_T("业火五笔输入法 设置"));
+    CPropertySheet sheet(_T("微火五笔输入法 设置"));
     CInputSettingsPage pageInput;
     CPunctuationPage pagePunct;
     CAppModePage pageAppMode;

@@ -1,22 +1,22 @@
 ; ============================================================================
-; winFire IME Inno Setup Script
+; WinFire IME Inno Setup Script
 ;
 ; 构建：
 ;   ISCC.exe winfire.iss
 ;
 ; 产物：
-;   ..\dist\FireIME-Setup.exe   （单文件 installer，含卸载器）
+;   ..\dist\WinFire-Setup.exe   （单文件 installer，含卸载器）
 ;
 ; 安装目标：
-;   %ProgramFiles%\FireIME\           程序文件 + uninstall.exe
-;   %APPDATA%\FireIME\                用户数据（config / 词库 / 统计）
+;   %ProgramFiles%\WinFire\           程序文件 + uninstall.exe
+;   %APPDATA%\WinFire\                用户数据（config / 词库 / 统计）
 ; ============================================================================
-#define MyAppName          "业火五笔输入法"
-#define MyAppNameEn        "FireIME"
+#define MyAppName          "微火五笔输入法"
+#define MyAppNameEn        "WinFire"
 #define MyAppVersion       "0.1.0"
-#define MyAppPublisher     "winFire Project"
+#define MyAppPublisher     "WinFire Project"
 #define MyAppExeName       "fire_config.exe"
-#define MyAppURL          "https://github.com/winFire/winFire"
+#define MyAppURL          "https://github.com/WinFire/WinFire"
 
 ; 构建产物路径（相对于本 .iss 文件所在目录）
 #define BuildTsfDir        "..\windows\tsf\x64\Release"
@@ -33,11 +33,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\FireIME
+DefaultDirName={autopf}\WinFire
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist
-OutputBaseFilename=FireIME-Setup
+OutputBaseFilename=WinFire-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -55,7 +55,7 @@ UninstallDisplayName={#MyAppName}
 
 ; ----------------------------------------------------------------------------
 ; 程序文件：fire_tsf.dll / fire_config.exe / 码表（供配置界面重新构建词库用）
-; 程序目录只读，所有用户可写数据放 %APPDATA%\FireIME
+; 程序目录只读，所有用户可写数据放 %APPDATA%\WinFire
 ; ----------------------------------------------------------------------------
 [Files]
 ; 主程序（始终覆盖）
@@ -63,9 +63,9 @@ Source: "{#BuildTsfDir}\fire_tsf.dll";       DestDir: "{app}"; Flags: ignorevers
 Source: "{#BuildConfigDir}\fire_config.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 ; 预构建词库（随包分发，避免用户安装时长时间等待 tablebuilder 构建 1.3MB 码表）
 ; 安装到用户数据目录，仅当目标不存在时复制（保留用户已有词库与动态调频）
-Source: "{#StagingDir}\wb_py_dict.sqlite";   DestDir: "{userappdata}\FireIME"; Flags: onlyifdoesntexist
+Source: "{#StagingDir}\wb_py_dict.sqlite";   DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
 ; 默认配置（仅首次安装写入，已存在则保留用户自定义）
-Source: "{#StagingDir}\config.json";         DestDir: "{userappdata}\FireIME"; Flags: onlyifdoesntexist
+Source: "{#StagingDir}\config.json";         DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
 ; 码表（供 fire_config.exe 词库管理页导入/重建词库使用）
 Source: "{#ResourcesDir}\wb_table.txt";      DestDir: "{app}\tables"; Flags: ignoreversion
 Source: "{#ResourcesDir}\wb_98_table.txt";   DestDir: "{app}\tables"; Flags: ignoreversion
@@ -75,7 +75,7 @@ Source: "{#ResourcesDir}\py_table.txt";      DestDir: "{app}\tables"; Flags: ign
 ; 程序目录与用户数据目录
 Name: "{app}";                  Flags: uninsneveruninstall
 Name: "{app}\tables";           Flags: uninsneveruninstall
-Name: "{userappdata}\FireIME";  Flags: uninsneveruninstall
+Name: "{userappdata}\WinFire";  Flags: uninsneveruninstall
 
 ; ----------------------------------------------------------------------------
 ; 注册 TSF：regsvr32 /s fire_tsf.dll（DllRegisterServer 自包含 CLSID/Profile/Category 注册）
@@ -138,7 +138,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    userDataDir := ExpandConstant('{userappdata}\FireIME');
+    userDataDir := ExpandConstant('{userappdata}\WinFire');
     if DirExists(userDataDir) then
     begin
       if MsgBox(Format(CustomMessage('UninstallDataPrompt'), [userDataDir]),

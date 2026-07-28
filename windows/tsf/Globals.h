@@ -11,7 +11,7 @@
 HRESULT FireAtlModuleInit(HINSTANCE hInst);
 void FireAtlModuleTerm();
 
-// 业火输入法 Text Service 的 CLSID（部署前请用 guidgen 重新生成，避免与他人冲突）
+// 微火输入法 Text Service 的 CLSID（部署前请用 guidgen 重新生成，避免与他人冲突）
 // {8E9F0B21-3C4D-4E5A-9B7C-1F2A3B4C5D6E}
 extern const CLSID CLSID_FireTextService;
 
@@ -36,5 +36,5 @@ inline void DllAddRef() { InterlockedIncrement(&g_cRefDll); }
 inline void DllRelease() { InterlockedDecrement(&g_cRefDll); }
 
 // TSF TIP 描述、注册用字符串
-#define FIRE_TEXTSERVICE_DESC L"业火五笔输入法"
-#define FIRE_PROFILE_DESC     L"业火五笔"
+#define FIRE_TEXTSERVICE_DESC L"微火五笔输入法"
+#define FIRE_PROFILE_DESC     L"微火五笔"

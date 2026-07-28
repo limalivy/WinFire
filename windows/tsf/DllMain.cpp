@@ -33,17 +33,17 @@ public:
         return r;
     }
     STDMETHODIMP CreateInstance(IUnknown* pUnkOuter, REFIID riid, void** ppv) override {
-        FIRE_LOG(L"[FireIME] ClassFactory::CreateInstance [tid=%lu]\n", GetCurrentThreadId());
+        FIRE_LOG(L"[WinFire] ClassFactory::CreateInstance [tid=%lu]\n", GetCurrentThreadId());
         if (pUnkOuter) return CLASS_E_NOAGGREGATION;
         CComObject<CFireTextService>* p = nullptr;
         HRESULT hr = CComObject<CFireTextService>::CreateInstance(&p);
         if (FAILED(hr)) {
-            FIRE_LOG(L"[FireIME] ClassFactory: CreateInstance FAILED hr=0x%08lX\n", (unsigned long)hr);
+            FIRE_LOG(L"[WinFire] ClassFactory: CreateInstance FAILED hr=0x%08lX\n", (unsigned long)hr);
             return hr;
         }
         p->AddRef();
         hr = p->QueryInterface(riid, ppv);
-        FIRE_LOG(L"[FireIME] ClassFactory: QI hr=0x%08lX ppv=%p\n", (unsigned long)hr, ppv ? *ppv : nullptr);
+        FIRE_LOG(L"[WinFire] ClassFactory: QI hr=0x%08lX ppv=%p\n", (unsigned long)hr, ppv ? *ppv : nullptr);
         p->Release();
         return hr;
     }
@@ -57,7 +57,7 @@ private:
 
 // ---- DLL 导出 ----
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
-    FIRE_LOG(L"[FireIME] DllGetClassObject [tid=%lu]\n", GetCurrentThreadId());
+    FIRE_LOG(L"[WinFire] DllGetClassObject [tid=%lu]\n", GetCurrentThreadId());
     if (rclsid == CLSID_FireTextService) {
         CFireClassFactory* f = new CFireClassFactory();
         HRESULT hr = f->QueryInterface(riid, ppv);
@@ -76,17 +76,17 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID) {
         case DLL_PROCESS_ATTACH:
             g_hInst = hInst;
             DisableThreadLibraryCalls(hInst);
-            FIRE_LOG(L"[FireIME] DllMain: DLL_PROCESS_ATTACH hInst=%p [tid=%lu]\n",
+            FIRE_LOG(L"[WinFire] DllMain: DLL_PROCESS_ATTACH hInst=%p [tid=%lu]\n",
                      (void*)hInst, GetCurrentThreadId());
             // ATL Module 初始化（初始化 _pAtlModule，供 CComObject<>::CreateInstance 使用）
             if (FAILED(FireAtlModuleInit(hInst))) {
-                FIRE_LOG(L"[FireIME] DllMain: FireAtlModuleInit FAILED\n");
+                FIRE_LOG(L"[WinFire] DllMain: FireAtlModuleInit FAILED\n");
                 return FALSE;
             }
-            FIRE_LOG(L"[FireIME] DllMain: ATL Module Init OK\n");
+            FIRE_LOG(L"[WinFire] DllMain: ATL Module Init OK\n");
             break;
         case DLL_PROCESS_DETACH:
-            FIRE_LOG(L"[FireIME] DllMain: DLL_PROCESS_DETACH [tid=%lu]\n", GetCurrentThreadId());
+            FIRE_LOG(L"[WinFire] DllMain: DLL_PROCESS_DETACH [tid=%lu]\n", GetCurrentThreadId());
             // ATL Module 终止化
             FireAtlModuleTerm();
             g_hInst = nullptr;

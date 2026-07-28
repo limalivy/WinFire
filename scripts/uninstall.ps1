@@ -5,11 +5,11 @@
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 
-$InstallDir = "$env:ProgramFiles\FireIME"
+$InstallDir = "$env:ProgramFiles\WinFire"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  winFire IME Uninstaller" -ForegroundColor Cyan
+Write-Host "  WinFire IME Uninstaller" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -44,7 +44,7 @@ if (Test-Path $InstallDir) {
 
 # 3. User data
 Write-Host "[3/3] User data..." -ForegroundColor Yellow
-$ConfigDir = "$env:APPDATA\FireIME"
+$ConfigDir = "$env:APPDATA\WinFire"
 if (Test-Path $ConfigDir) {
     $answer = Read-Host "  Keep user data at $ConfigDir? [Y/n]"
     if ($answer -eq 'n' -or $answer -eq 'N') {

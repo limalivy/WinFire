@@ -7,8 +7,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot    = Split-Path -Parent $ScriptDir
-$InstallDir  = "$env:ProgramFiles\FireIME"
-$ConfigDir   = "$env:APPDATA\FireIME"
+$InstallDir  = "$env:ProgramFiles\WinFire"
+$ConfigDir   = "$env:APPDATA\WinFire"
 
 $TsfDll      = "$RepoRoot\windows\tsf\x64\Release\fire_tsf.dll"
 $ConfigExe   = "$RepoRoot\windows\config\x64\Release\fire_config.exe"
@@ -16,7 +16,7 @@ $Tablebuilder= "$RepoRoot\build\tablebuilder.exe"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  winFire IME Installer" -ForegroundColor Cyan
+Write-Host "  WinFire IME Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -204,7 +204,7 @@ Write-Host ("  Program : " + $InstallDir) -ForegroundColor White
 Write-Host ("  Config  : " + $ConfigDir) -ForegroundColor White
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Settings -> Language -> Chinese -> Add Keyboard -> ye huo wu bi" -ForegroundColor White
+Write-Host "  1. Settings -> Language -> Chinese -> Add Keyboard -> wei huo wu bi" -ForegroundColor White
 Write-Host ("  2. Run " + $InstallDir + "\fire_config.exe to configure") -ForegroundColor White
 Write-Host ""
 Write-Host ("  Uninstall: " + $ScriptDir + "\uninstall.ps1") -ForegroundColor DarkGray

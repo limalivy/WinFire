@@ -1,5 +1,5 @@
 //
-//  ConfigApp.h — MFC 配置界面应用（业火五笔 Windows 设置）
+//  ConfigApp.h — MFC 配置界面应用（微火五笔 Windows 设置）
 //
 #pragma once
 

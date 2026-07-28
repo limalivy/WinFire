@@ -11,7 +11,7 @@ namespace firewin {
 
 CFireLangBarButton::CFireLangBarButton(CFireTextService* service) : service_(service) {
     FIRE_LOG_ENTER();
-    FIRE_LOG(L"[FireIME] LangBarButton ctor: service=%p [tid=%lu]\n",
+    FIRE_LOG(L"[WinFire] LangBarButton ctor: service=%p [tid=%lu]\n",
              (void*)service, GetCurrentThreadId());
     if (service_) service_->AddRef();
     info_.clsidService = CLSID_FireTextService;
@@ -74,13 +74,13 @@ STDMETHODIMP CFireLangBarButton::Show(BOOL /*fShow*/) { return S_OK; }
 
 STDMETHODIMP CFireLangBarButton::GetTooltipString(BSTR* pbstrToolTip) {
     if (!pbstrToolTip) return E_INVALIDARG;
-    *pbstrToolTip = SysAllocString(L"业火五笔：点击切换中/英文");
+    *pbstrToolTip = SysAllocString(L"微火五笔：点击切换中/英文");
     return *pbstrToolTip ? S_OK : E_OUTOFMEMORY;
 }
 
 // ---- ITfLangBarItemButton ----
 STDMETHODIMP CFireLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT* /*prcArea*/) {
-    FIRE_LOG(L"[FireIME] LangBar OnClick: click=%d service=%p\n", (int)click, (void*)service_);
+    FIRE_LOG(L"[WinFire] LangBar OnClick: click=%d service=%p\n", (int)click, (void*)service_);
     if (click == TF_LBI_CLK_LEFT && service_) {
         service_->ToggleInputModeFromLangBar();
     }
@@ -97,7 +97,7 @@ STDMETHODIMP CFireLangBarButton::InitMenu(ITfMenu* pMenu) {
 }
 
 STDMETHODIMP CFireLangBarButton::OnMenuSelect(UINT wID) {
-    FIRE_LOG(L"[FireIME] LangBar OnMenuSelect: wID=%u service=%p\n", wID, (void*)service_);
+    FIRE_LOG(L"[WinFire] LangBar OnMenuSelect: wID=%u service=%p\n", wID, (void*)service_);
     if (!service_) return S_OK;
     if (wID == kMenuZh) {
         service_->SetInputModeFromLangBar(fire::InputMode::ZhHans);
@@ -118,7 +118,7 @@ STDMETHODIMP CFireLangBarButton::GetText(BSTR* pbstrText) {
     if (!pbstrText) return E_INVALIDARG;
     std::wstring t = CurrentModeText();
     *pbstrText = SysAllocString(t.c_str());
-    FIRE_LOG(L"[FireIME] LangBar GetText: text='%ws'\n", t.c_str());
+    FIRE_LOG(L"[WinFire] LangBar GetText: text='%ws'\n", t.c_str());
     FIRE_LOG_EXIT();
     return *pbstrText ? S_OK : E_OUTOFMEMORY;
 }
@@ -136,7 +136,7 @@ STDMETHODIMP CFireLangBarButton::AdviseSink(REFIID riid, IUnknown* punk, DWORD* 
     // 用非 0 的固定 cookie，避免与 TF_INVALID_COOKIE(0) 混淆，使 UnadviseSink 校验严格。
     sinkCookie_ = 1;
     *pdwCookie = sinkCookie_;
-    FIRE_LOG(L"[FireIME] LangBar AdviseSink: OK cookie=%lu\n", (unsigned long)sinkCookie_);
+    FIRE_LOG(L"[WinFire] LangBar AdviseSink: OK cookie=%lu\n", (unsigned long)sinkCookie_);
     FIRE_LOG_EXIT();
     return S_OK;
 }

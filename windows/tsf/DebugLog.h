@@ -2,7 +2,7 @@
 //  DebugLog.h — 受 FIRE_DEBUG 宏开关控制的日志工具（文件落盘版）
 //
 //  用法：
-//    FIRE_LOG(L"[FireIME] Activate: enter\n");
+//    FIRE_LOG(L"[WinFire] Activate: enter\n");
 //    FIRE_LOG_ENTER();                  // 自动打印函数名
 //    FIRE_LOG_HR(hr, L"AdviseSink"); // 打印 HRESULT
 //
@@ -10,7 +10,7 @@
 //  Release 配置下所有日志调用编译为空指令，零开销。
 //
 //  日志文件路径（固定）：
-//    %LOCALAPPDATA%\FireIME\logs\fire_tsf_<pid>.log
+//    %LOCALAPPDATA%\WinFire\logs\fire_tsf_<pid>.log
 //  按进程 ID 分文件，避免多进程同时写入冲突；每次写后立即 fflush+fclose，
 //  确保进程崩溃/桌面黑屏前的日志已落盘，不会丢失。
 //
@@ -36,19 +36,19 @@ namespace firewin {
 inline bool g_fireLogFsReady = false;
 inline void FireLogSetFsReady(bool v) { g_fireLogFsReady = v; }
 
-// 计算日志文件路径： %LOCALAPPDATA%\FireIME\logs\fire_tsf_<pid>.log
+// 计算日志文件路径： %LOCALAPPDATA%\WinFire\logs\fire_tsf_<pid>.log
 // 用 GetEnvironmentVariableW 取 LOCALAPPDATA，避免在 DllMain 早期依赖 shlobj.h。
 inline std::wstring FireLogFilePath() {
     wchar_t base[MAX_PATH] = {0};
     DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
     std::wstring dir;
     if (n > 0 && n < MAX_PATH) {
-        dir = std::wstring(base) + L"\\FireIME\\logs";
+        dir = std::wstring(base) + L"\\WinFire\\logs";
     } else {
         // 回退到临时目录
         wchar_t temp[MAX_PATH] = {0};
         GetTempPathW(MAX_PATH, temp);
-        dir = std::wstring(temp) + L"FireIME_logs";
+        dir = std::wstring(temp) + L"WinFire_logs";
     }
     CreateDirectoryW(dir.c_str(), nullptr);  // 已存在则忽略错误
     return dir + L"\\fire_tsf_" + std::to_wstring(GetCurrentProcessId()) + L".log";
@@ -102,20 +102,20 @@ inline void FireLogSetFsReady(bool) {}
 
 // ---- 日志宏 ----
 #ifdef FIRE_DEBUG
-// 基本日志：FIRE_LOG(L"[FireIME] xxx: %d\n", value)
+// 基本日志：FIRE_LOG(L"[WinFire] xxx: %d\n", value)
 #define FIRE_LOG(...) ::firewin::FireLogV(__VA_ARGS__)
-// 函数入口日志：自动打印 [FireIME] >>> FunctionName [tid=xxx]
+// 函数入口日志：自动打印 [WinFire] >>> FunctionName [tid=xxx]
 #define FIRE_LOG_ENTER() \
-    ::firewin::FireLogV(L"[FireIME] >>> %hs [tid=%lu]\n", __FUNCTION__, ::firewin::FireLogTid())
+    ::firewin::FireLogV(L"[WinFire] >>> %hs [tid=%lu]\n", __FUNCTION__, ::firewin::FireLogTid())
 // 函数出口日志
 #define FIRE_LOG_EXIT() \
-    ::firewin::FireLogV(L"[FireIME] <<< %hs [tid=%lu]\n", __FUNCTION__, ::firewin::FireLogTid())
+    ::firewin::FireLogV(L"[WinFire] <<< %hs [tid=%lu]\n", __FUNCTION__, ::firewin::FireLogTid())
 // HRESULT 日志：FIRE_LOG_HR(hr, L"AdviseSink")
 #define FIRE_LOG_HR(hr, what) \
-    ::firewin::FireLogV(L"[FireIME] %hs hr=0x%08lX %s\n", __FUNCTION__, (unsigned long)(hr), (what))
+    ::firewin::FireLogV(L"[WinFire] %hs hr=0x%08lX %s\n", __FUNCTION__, (unsigned long)(hr), (what))
 // 带前缀的日志：FIRE_LOG_TAG(L"InitEngine", L"step: dict created\n")
 #define FIRE_LOG_TAG(tag, ...) \
-    ::firewin::FireLogV(L"[FireIME] [%s] " __VA_ARGS__, L##tag)
+    ::firewin::FireLogV(L"[WinFire] [%s] " __VA_ARGS__, L##tag)
 #else
 #define FIRE_LOG(...)   ((void)0)
 #define FIRE_LOG_ENTER() ((void)0)
