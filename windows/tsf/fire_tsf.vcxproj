@@ -80,5 +80,31 @@
     <ClInclude Include="TextService.h" />
     <ClInclude Include="LangBarButton.h" />
   </ItemGroup>
+  <!-- ===================================================================== -->
+  <!-- 版本号单一来源：从仓库根目录的 VERSION 文件（形如 0.1.0）生成 Version.h。 -->
+  <!-- VERSION 不纳入 git（本地测试可频繁递增）；缺失时回退到已跟踪的基线 -->
+  <!-- VERSION.default，保证全新 checkout / CI 仍可构建。 -->
+  <!-- 该目标在每次编译前运行，保证 Globals.h 里 include 的 FIRE_VER_* 宏始终 -->
+  <!-- 与版本文件一致；发版/测试改版本时只改 VERSION 一处（详见 AGENTS.md）。 -->
+  <!-- Version.h 为生成产物，不纳入版本控制。 -->
+  <!-- ===================================================================== -->
+  <Target Name="GenerateVersionHeader" BeforeTargets="ClCompile">
+    <PropertyGroup>
+      <VersionFilePath Condition="Exists('$(ProjectDir)..\..\VERSION')">$(ProjectDir)..\..\VERSION</VersionFilePath>
+      <VersionFilePath Condition="'$(VersionFilePath)'==''">$(ProjectDir)..\..\VERSION.default</VersionFilePath>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(VersionFilePath)')" Text="Neither VERSION nor VERSION.default found under repo root" />
+    <ReadLinesFromFile File="$(VersionFilePath)">
+      <Output TaskParameter="Lines" ItemName="VersionLines" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <FireVersion>$([System.String]::Copy('%(VersionLines.Identity)').Trim())</FireVersion>
+      <FireVerMajor>$(FireVersion.Split('.')[0])</FireVerMajor>
+      <FireVerMinor>$(FireVersion.Split('.')[1])</FireVerMinor>
+      <FireVerPatch>$(FireVersion.Split('.')[2])</FireVerPatch>
+      <VersionHeaderContent>// 自动生成，请勿手改；版本号单一来源为仓库根目录 VERSION 文件。%0D%0A#pragma once%0D%0A#define FIRE_VER_MAJOR $(FireVerMajor)%0D%0A#define FIRE_VER_MINOR $(FireVerMinor)%0D%0A#define FIRE_VER_PATCH $(FireVerPatch)%0D%0A#define FIRE_VER_STRING "$(FireVersion)"%0D%0A</VersionHeaderContent>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(ProjectDir)Version.h" Lines="$(VersionHeaderContent)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

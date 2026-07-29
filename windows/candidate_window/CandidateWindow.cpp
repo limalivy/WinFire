@@ -537,10 +537,12 @@ int CandidateWindowController::HitTest(POINT pt) const {
 }
 
 void CandidateWindowController::LaunchConfigTool() {
-    // fire_tsf.dll 与 fire_config.exe 同目录：获取 DLL 路径后替换末段文件名
-    HMODULE hSelf = GetModuleHandleW(L"fire_tsf.dll");
+    // fire_tsf.dll 与 fire_config.exe 同目录：获取本 DLL 路径后替换末段文件名。
+    // hInst_ 是创建候选窗时传入的本模块句柄（TSF DLL 的 g_hInst）。不能按固定名
+    // GetModuleHandleW(L"fire_tsf.dll") 查找——DLL 已改为版本化文件名（如
+    // fire_tsf_0.1.0.dll），固定名会查不到。
     wchar_t dllPath[MAX_PATH] = {0};
-    if (!hSelf || !GetModuleFileNameW(hSelf, dllPath, MAX_PATH)) {
+    if (!hInst_ || !GetModuleFileNameW(hInst_, dllPath, MAX_PATH)) {
         FIRE_LOG(L"[WinFire] LaunchConfigTool: GetModuleFileName FAILED err=%lu\n", GetLastError());
         return;
     }

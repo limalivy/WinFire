@@ -53,6 +53,14 @@ test_stats_export.csv
 installer/staging/
 dist/
 
+# ---- Generated version header (single source: repo-root VERSION) ----
+windows/tsf/Version.h
+
+# ---- Working version file (bumped freely during local test; not tracked) ----
+# 基线版本 VERSION.default 纳入版本控制（仅正式发版递增）；本地测试用的
+# 工作版本 VERSION 不跟踪，避免频繁提交。构建时若无 VERSION 则回退 VERSION.default。
+/VERSION
+
 # ---- macOS ----
 .DS_Store
 

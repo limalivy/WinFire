@@ -15,29 +15,48 @@ Write-Host ""
 
 # 1. Unregister TSF
 Write-Host "[1/3] Unregistering IME..." -ForegroundColor Yellow
-$DllPath = "$InstallDir\fire_tsf.dll"
-if (Test-Path $DllPath) {
+# 反注册所有版本化 DLL（fire_tsf_*.dll）；兼容旧的固定名 fire_tsf.dll。
+$Dlls = @()
+$Dlls += Get-ChildItem -Path $InstallDir -Filter "fire_tsf_*.dll" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+if (Test-Path "$InstallDir\fire_tsf.dll") { $Dlls += "$InstallDir\fire_tsf.dll" }
+
+if ($Dlls.Count -gt 0) {
     Push-Location $InstallDir
     try {
-        & regsvr32 /s /u "$DllPath" 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [OK] IME unregistered" -ForegroundColor Green
-        } else {
-            & rundll32 "$DllPath",DllUnregisterServer 2>&1 | Out-Null
-            Write-Host "  [OK] Attempted rundll32 unregister" -ForegroundColor Yellow
+        foreach ($d in $Dlls) {
+            & regsvr32 /s /u "$d" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                & rundll32 "$d",DllUnregisterServer 2>&1 | Out-Null
+            }
+            Write-Host ("  [OK] Unregistered " + (Split-Path $d -Leaf)) -ForegroundColor Green
         }
     } finally {
         Pop-Location
     }
 } else {
-    Write-Host "  [SKIP] fire_tsf.dll not found" -ForegroundColor DarkGray
+    Write-Host "  [SKIP] no fire_tsf DLL found" -ForegroundColor DarkGray
 }
 
 # 2. Remove program files
 Write-Host "[2/3] Removing program files..." -ForegroundColor Yellow
 if (Test-Path $InstallDir) {
-    Remove-Item -Recurse -Force $InstallDir
-    Write-Host ("  [OK] Removed " + $InstallDir) -ForegroundColor Green
+    # 先处理可能仍被宿主进程占用的 DLL：删不掉则标记重启后删除，避免整体删除失败。
+    $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
+    $mf = Add-Type -MemberDefinition $sig -Name MoveFileExNative -Namespace WinFireUninstall -PassThru
+    Get-ChildItem -Path $InstallDir -Filter "fire_tsf*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Force -ErrorAction Stop
+        } catch {
+            $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null   # 4 = MOVEFILE_DELAY_UNTIL_REBOOT
+            Write-Host ("  [DEFER] " + $_.Name + " in use, will delete on reboot") -ForegroundColor DarkGray
+        }
+    }
+    Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    if (Test-Path $InstallDir) {
+        Write-Host ("  [PARTIAL] some files in use; remaining will be removed on reboot") -ForegroundColor Yellow
+    } else {
+        Write-Host ("  [OK] Removed " + $InstallDir) -ForegroundColor Green
+    }
 } else {
     Write-Host "  [SKIP] Directory not found" -ForegroundColor DarkGray
 }

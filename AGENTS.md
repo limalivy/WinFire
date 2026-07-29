@@ -25,6 +25,7 @@ winFire/
 ├── CMakeLists.txt              # 仅构建跨平台内核 + 测试 + tablebuilder（macOS 可验证）
 ├── AGENTS.md                   # 本文档
 ├── README.md                   # 项目说明（含致谢与功能介绍）
+├── VERSION.default            # 版本号基线（纳入 git，仅正式发版递增；工作版 VERSION 不跟踪，详见 §5.4）
 ├── core/                       # 跨平台内核（纯 C++17，不依赖 Windows / macOS API）
 │   ├── include/fire/
 │   │   ├── types.h             # 枚举 + 默认标点表           <- Fire/types.swift
@@ -171,6 +172,52 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 
 产物：`dist\WinFire-Setup.exe`（单文件 installer，含卸载器）。
 安装目标：`%ProgramFiles%\WinFire\`（程序文件） + `%APPDATA%\WinFire\`（用户数据）。
+
+### 5.4 版本号管理（单一来源 + 强制约束）
+
+**单一来源（Single Source of Truth）**：仓库根目录的版本文件（纯文本，形如 `0.1.0`，
+`MAJOR.MINOR.PATCH` 三段，各段必须 `<= 255`）。分两个文件以兼顾「单点修改」与「不频繁污染 git」：
+
+- `VERSION`（**不纳入 git**，见 `.gitignore`）：本地测试用的工作版本，可频繁递增，不产生提交噪音。
+- `VERSION.default`（**纳入 git**）：基线版本，仅在**正式发版**时递增并提交。
+
+三个消费方均**优先读 `VERSION`，缺失时回退 `VERSION.default`**（保证全新 clone / CI 也能构建）。
+所有其它位置的版本号都从这里派生，**禁止**在别处手写版本号：
+
+| 消费方 | 派生机制 | 说明 |
+|--------|----------|------|
+| `windows/tsf/Version.h`（`FIRE_VER_MAJOR/MINOR/PATCH`、`FIRE_VER_STRING`） | `fire_tsf.vcxproj` 的 `GenerateVersionHeader` 目标在 `ClCompile` 前读版本文件生成 | 生成产物，**不纳入版本控制**（已 `.gitignore`）；`Globals.h` 只 `#include "Version.h"`。CLSID/Profile GUID 末 3 字节由此派生（侧载升级）。 |
+| `installer/winfire.iss`（`MyAppVersion`） | ISPP 编译期 `FileOpen/FileRead` 版本文件 | DLL 版本化文件名 `fire_tsf_<VERSION>.dll`、AppVersion、卸载注册表 DisplayVersion 均取自此。 |
+| `scripts/install.ps1`（`$Version`） | 运行时 `Get-Content <RepoRoot>\VERSION`（回退 `VERSION.default`） | 直接部署脚本的版本化 DLL 文件名。 |
+
+三处均在两文件都缺失/为空时报错中止，确保不会静默用到过期版本号。
+
+**强制约束（务必遵守）**：
+
+- **测试即发版语义**：每次要产出可安装/可注册的构建物用于**测试**（编译 `fire_tsf.dll` 并
+  `regsvr32` 注册、跑 installer、或跑 `install.ps1`）时，**必须先递增 `VERSION`**（通常 +PATCH）。
+  原因：TSF 是 in-process DLL，旧版本 DLL 会被宿主进程（Word/Chrome/explorer/ctfmon…）加映像锁
+  占用；只有版本化文件名 + 按版本派生的 CLSID/Profile 侧载，才能让新构建物在不重启、不强杀宿主
+  进程的前提下安装并生效。**复用同一版本号重复测试会命中旧文件占用与旧 CLSID 缓存，导致「改了没生效」
+  的假象**。
+- **单点修改**：测试期只改 `VERSION` 一处；正式发版时把定稿版本写入 `VERSION.default`（并提交），
+  然后重新构建。**不要**手改 `Version.h`、`winfire.iss`、`install.ps1` 里的版本号（`Version.h` 会被
+  构建覆盖，另两处根本不含字面量）。
+- **提交前检查**：`VERSION`（本地工作版本）与 `windows/tsf/Version.h`（生成产物）都不应出现在 git
+  变更中；只有正式发版才提交 `VERSION.default`。
+
+**更新版本号操作步骤**：
+
+```text
+1. 本地测试：编辑 VERSION（如 0.1.0 -> 0.1.1），此文件不进 git。
+   正式发版：同步把定稿版本写入 VERSION.default 并提交。三段均需 <= 255。
+2. 重新构建：
+   - 内核回归：cmake --build build && (cd build && ctest --output-on-failure)
+   - Windows 层/安装包：scripts\build_installer.ps1（MSBuild 会自动重生成 Version.h）
+     或单独 MSBuild windows\tsf\fire_tsf.vcxproj，或 scripts\install.ps1 直接部署。
+3. 安装新构建物即为侧载升级：新版用新 DLL 文件名 + 新 CLSID/Profile 注册，
+   旧版反注册、旧 DLL 占用时延迟到重启删除（无需重启系统即可测试新版）。
+```
 
 ## 6. Windows 层落地要点
 

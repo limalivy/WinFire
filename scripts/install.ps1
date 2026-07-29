@@ -10,6 +10,18 @@ $RepoRoot    = Split-Path -Parent $ScriptDir
 $InstallDir  = "$env:ProgramFiles\WinFire"
 $ConfigDir   = "$env:APPDATA\WinFire"
 
+# TSF DLL 版本化文件名。版本号「单一来源」为仓库根目录的 VERSION 文件；
+# VERSION 不纳入 git（本地测试可频繁递增）；缺失时回退到已跟踪的基线 VERSION.default。
+# winfire.iss（ISPP 读版本文件）与 Globals.h（编译期生成 Version.h）均取自同一处，
+# 三者天然一致。发版/测试改版本只改 VERSION 一处（详见 AGENTS.md「版本号管理」）。
+# 版本化 + 侧载可避免升级/卸载时旧同名 DLL 被宿主进程占用而无法覆盖。
+$VersionFile = Join-Path $RepoRoot "VERSION"
+if (-not (Test-Path $VersionFile)) { $VersionFile = Join-Path $RepoRoot "VERSION.default" }
+if (-not (Test-Path $VersionFile)) { throw "Neither VERSION nor VERSION.default found under: $RepoRoot" }
+$Version = (Get-Content $VersionFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($Version)) { throw "Version file is empty: $VersionFile" }
+$TsfDllInstalled = "fire_tsf_$Version.dll"
+
 $TsfDll      = "$RepoRoot\windows\tsf\x64\Release\fire_tsf.dll"
 $ConfigExe   = "$RepoRoot\windows\config\x64\Release\fire_config.exe"
 # tablebuilder：VS 多配置生成器产物在 build\Release\，单配置生成器在 build\，两处都探测。
@@ -43,7 +55,25 @@ Write-Host "[1/5] Checking build artifacts..." -ForegroundColor Yellow
 # ---- 2. Install program files ----
 Write-Host "[2/5] Installing program files..." -ForegroundColor Yellow
 $null = New-Item -ItemType Directory -Path $InstallDir -Force
-Copy-Item $TsfDll      "$InstallDir\fire_tsf.dll"   -Force
+
+# 反注册并清理旧版本 DLL（若存在），随后写入版本化文件名的新 DLL。
+# 旧 DLL 若仍被宿主进程占用而删不掉，标记为重启后删除，不阻塞安装。
+Get-ChildItem -Path $InstallDir -Filter "fire_tsf_*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Name -ne $TsfDllInstalled) {
+        & regsvr32 /s /u $_.FullName 2>&1 | Out-Null
+        try {
+            Remove-Item $_.FullName -Force -ErrorAction Stop
+        } catch {
+            # 仍被占用：标记重启后删除
+            $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
+            $mf = Add-Type -MemberDefinition $sig -Name MoveFileExNative -Namespace WinFireInstall -PassThru
+            $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null   # 4 = MOVEFILE_DELAY_UNTIL_REBOOT
+            Write-Host ("  [DEFER] " + $_.Name + " in use, will delete on reboot") -ForegroundColor DarkGray
+        }
+    }
+}
+
+Copy-Item $TsfDll      "$InstallDir\$TsfDllInstalled" -Force
 Copy-Item $ConfigExe   "$InstallDir\fire_config.exe" -Force
 Write-Host ("  [OK]   " + $InstallDir) -ForegroundColor Green
 
@@ -184,7 +214,7 @@ Create-StatsDb
 # ---- 5. Register TSF ----
 Write-Host "[5/5] Registering IME..." -ForegroundColor Yellow
 
-$DllPath = "$InstallDir\fire_tsf.dll"
+$DllPath = "$InstallDir\$TsfDllInstalled"
 Push-Location $InstallDir
 try {
     $result = & regsvr32 /s "$DllPath" 2>&1
