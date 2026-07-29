@@ -82,7 +82,7 @@ UninstallDisplayIcon={app}\fire_config.exe
 UninstallDisplayName={#MyAppName}
 
 ; ----------------------------------------------------------------------------
-; 程序文件：fire_tsf.dll / fire_config.exe / 码表（供配置界面重新构建词库用）
+; 程序文件：fire_tsf.dll / fire_config.exe / tablebuilder.exe / 码表 / 预构建词库 / 默认配置
 ; 程序目录只读，所有用户可写数据放 %APPDATA%\WinFire
 ; ----------------------------------------------------------------------------
 [Files]
@@ -100,6 +100,8 @@ Source: "{#StagingDir}\config.json";         DestDir: "{userappdata}\WinFire"; F
 Source: "{#ResourcesDir}\wb_table.txt";      DestDir: "{app}\tables"; Flags: ignoreversion
 Source: "{#ResourcesDir}\wb_98_table.txt";   DestDir: "{app}\tables"; Flags: ignoreversion
 Source: "{#ResourcesDir}\py_table.txt";      DestDir: "{app}\tables"; Flags: ignoreversion
+; 词库构建工具（fire_config.exe 词库管理页点击"生成词库"时调用）
+Source: "{#StagingDir}\tablebuilder.exe";    DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 ; 程序目录与用户数据目录
