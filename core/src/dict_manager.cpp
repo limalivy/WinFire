@@ -200,8 +200,11 @@ std::string DictManager::statement_sql(bool use_pagination) const {
     } else if (code_mode == CodeMode::Pinyin) {
         type_filter = "and type in ('py', 'user')";
     }
-    std::string code_agg =
-        (code_mode == CodeMode::WubiPinyin) ? "max(wbcode)" : "min(wbcode)";
+    // 聚合取简码：五笔简码必为全码前缀（"工"=a/aa/aaa/aaaa），
+    // 故字典序最小者即最短即简码，min(wbcode) O(1) 聚合即可。
+    // 注：macOS Fire 在 WubiPinyin 模式下用 max(wbcode)（显示全码），
+    // 但用户要求优先显示简码，故所有模式统一用 min。
+    std::string code_agg = "min(wbcode)";
     std::ostringstream sql;
     sql << "select " << code_agg << ", text, type, min(query) as query "
         << "from wb_py_dict "
@@ -330,6 +333,7 @@ QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin
 
     int candidate_count = config_.candidate_count;
     std::string word_input_filter = config_.enable_word_input ? "" : "and length(text) = 1";
+    // 反查同样用 min(wbcode) 取简码（与 statement_sql 一致，O(1) 聚合）。
     std::ostringstream sql;
     sql << "select min(wbcode) as wbcode, text, type, min(query) as query "
         << "from wb_py_dict where query glob :queryLike and type = 'py' " << word_input_filter

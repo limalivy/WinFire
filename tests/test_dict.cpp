@@ -92,3 +92,32 @@ TEST_CASE(dict_pagination_has_next) {
     CHECK(r2.candidates.size() >= 1);
     CHECK(!r2.has_next);
 }
+
+// 简码：candidate.code 应为该 text 在当前查询前缀下最短的 wbcode。
+// 五笔简码必为全码前缀（"工"=a/aa/aaa/aaaa），故字典序最小 = 最短 = 简码，
+// min(wbcode) O(1) 聚合即可取到（与 macOS Fire 实现一致）。
+TEST_CASE(dict_shortest_code_as_simple_code) {
+    seed();
+    Config cfg;
+    cfg.db_path = test_db_path();
+    cfg.code_mode = CodeMode::Wubi;
+    cfg.candidate_count = 5;
+    DictManager dm(cfg);
+    // 查 "a"：query glob 'a*' 匹配 a/aa/aaa/aaaa，min(wbcode)="a" = 简码
+    auto r = dm.get_candidates("a", 1);
+    const Candidate* gong = nullptr;
+    for (const auto& c : r.candidates) {
+        if (c.text == "工") { gong = &c; break; }
+    }
+    CHECK(gong != nullptr);
+    if (gong) CHECK_STR_EQ(gong->code, "a");
+    // 查 "aaa"：query glob 'aaa*' 仅匹配 aaa/aaaa，min(wbcode)="aaa"
+    // （"a" 不会被该查询命中，因 a 不以 aaa 为前缀）
+    auto r2 = dm.get_candidates("aaa", 1);
+    const Candidate* gong2 = nullptr;
+    for (const auto& c : r2.candidates) {
+        if (c.text == "工") { gong2 = &c; break; }
+    }
+    CHECK(gong2 != nullptr);
+    if (gong2) CHECK_STR_EQ(gong2->code, "aaa");
+}
