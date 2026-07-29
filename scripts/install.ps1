@@ -12,7 +12,12 @@ $ConfigDir   = "$env:APPDATA\WinFire"
 
 $TsfDll      = "$RepoRoot\windows\tsf\x64\Release\fire_tsf.dll"
 $ConfigExe   = "$RepoRoot\windows\config\x64\Release\fire_config.exe"
-$Tablebuilder= "$RepoRoot\build\tablebuilder.exe"
+# tablebuilder：VS 多配置生成器产物在 build\Release\，单配置生成器在 build\，两处都探测。
+if (Test-Path "$RepoRoot\build\Release\tablebuilder.exe") {
+    $Tablebuilder = "$RepoRoot\build\Release\tablebuilder.exe"
+} else {
+    $Tablebuilder = "$RepoRoot\build\tablebuilder.exe"
+}
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan

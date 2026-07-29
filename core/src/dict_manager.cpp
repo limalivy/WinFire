@@ -50,6 +50,13 @@ size_t utf8_count(const std::string& s) {
     return count;
 }
 
+// 安全读取列文本：列值为 NULL 时 sqlite3_column_text 返回 nullptr，
+// 用 nullptr 构造 std::string 是未定义行为，这里统一返回空串。
+std::string col_text(sqlite3_stmt* stmt, int col) {
+    const unsigned char* p = sqlite3_column_text(stmt, col);
+    return p ? reinterpret_cast<const char*>(p) : std::string();
+}
+
 // 取 UTF-8 后 n 个字符
 std::string utf8_take_suffix(const std::string& s, size_t n) {
     std::vector<size_t> starts;
@@ -90,7 +97,15 @@ void DictManager::close() {
 
 void DictManager::prepare_statement() {
     if (db_ == nullptr && !config_.db_path.empty()) {
-        sqlite3_open_v2(config_.db_path.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr);
+        if (sqlite3_open_v2(config_.db_path.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr) !=
+            SQLITE_OK) {
+            // 打开失败（文件缺失/损坏）：关闭句柄并置空，后续查询据 db_==nullptr 短路。
+            if (db_) {
+                sqlite3_close_v2(db_);
+                db_ = nullptr;
+            }
+            return;
+        }
         sqlite3_exec(db_, "PRAGMA case_sensitive_like=ON;", nullptr, nullptr, nullptr);
     }
 }
@@ -268,6 +283,7 @@ int DictManager::min_id_from_dict_table() {
 QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin, int page) {
     prepare_statement();
     QueryResult result;
+    if (!db_) return result;
     if (pinyin.empty()) return result;
     if (!is_all_alpha(pinyin)) return result;
 
@@ -291,8 +307,8 @@ QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin
 
     std::vector<Candidate> candidates;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        std::string wbcode = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        std::string text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        std::string wbcode = col_text(stmt, 0);
+        std::string text = col_text(stmt, 1);
         // 反查结果按 py 类型渲染，展示形码
         candidates.emplace_back(wbcode, text, CandidateType::Py);
     }
@@ -334,6 +350,7 @@ QueryResult DictManager::get_candidates(const std::string& query, int page) {
     std::string like = query_like(query);
     bool dyn = should_apply_dynamic_frequency(query);
 
+    if (!db_) return result;
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, statement_sql(!dyn).c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         sqlite3_finalize(stmt);
@@ -348,9 +365,9 @@ QueryResult DictManager::get_candidates(const std::string& query, int page) {
 
     std::vector<Candidate> candidates;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        std::string code = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        std::string text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        std::string type_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        std::string code = col_text(stmt, 0);
+        std::string text = col_text(stmt, 1);
+        std::string type_str = col_text(stmt, 2);
         CandidateType type = CandidateType::Wb;
         candidate_type_from_string(type_str, type);
         candidates.emplace_back(code, text, type);
@@ -490,8 +507,8 @@ std::vector<Candidate> DictManager::get_user_candidates() {
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            std::string code = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            std::string text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string code = col_text(stmt, 0);
+            std::string text = col_text(stmt, 1);
             candidates.emplace_back(code, text, CandidateType::User);
         }
     }

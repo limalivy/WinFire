@@ -101,6 +101,12 @@ private:
     // per-app 输入模式：记录上一个获得焦点的应用标识，失焦时保存
     std::string currentAppId_;
 
+    // Shift 单击切换中英文：OnTest* 是每次按键必被调用的（无论是否吃键），
+    // 而 OnKeyDown/OnKeyUp 仅在该键被吃时才调用。裸 Shift 不会被吃，
+    // 故修饰键单击检测必须放在 OnTest* 中；检测到后置位此标志，
+    // 在（因吃掉 Shift 抬起而必被调用的）OnKeyUp 中执行真正切换。
+    bool pendingShiftToggle_ = false;
+
     void InitEngine();
     void LoadConfigFromDisk();  // 读取 config.json
     void RegisterLangBarButton();

@@ -408,6 +408,8 @@ STDMETHODIMP CFireTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam,
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
     // 查询阶段：不改写键盘死键状态
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb, /*noStateChange=*/true);
+    // 修饰键单击检测放在 OnTest*（每次按键必被调用），裸 Shift 不会被吃、OnKeyDown 收不到。
+    translator_.shiftChecker.OnKeyDown((UINT)wParam);
     bool eat = ShouldEat(ev);
     *pfEaten = eat ? TRUE : FALSE;
     FIRE_LOG(L"[WinFire] OnTestKeyDown: eat=%d text='%hs'\n", eat ? 1 : 0, ev.text.c_str());
@@ -416,8 +418,13 @@ STDMETHODIMP CFireTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam,
 
 STDMETHODIMP CFireTextService::OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                            BOOL* pfEaten) {
-    // Shift 单击切换：抬起时判断
+    // Shift 单击切换：在此判断（OnTestKeyUp 每次抬起必被调用）。
+    // 若检测到单击且允许中英切换，则吃掉这次 Shift 抬起，使 TSF 随后调用 OnKeyUp 执行切换。
     *pfEaten = FALSE;
+    if (translator_.shiftChecker.OnKeyUp((UINT)wParam) && !config_.disable_en_mode) {
+        pendingShiftToggle_ = true;
+        *pfEaten = TRUE;
+    }
     return S_OK;
 }
 
@@ -428,7 +435,7 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     BYTE kb[256];
     GetKeyboardState(kb);
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
-    translator_.shiftChecker.OnKeyDown((UINT)wParam);
+    // 注：Shift 单击检测已移至 OnTestKeyDown/OnTestKeyUp（那里每次按键必被调用）。
 
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb);
     if (!ShouldEat(ev)) {
@@ -442,11 +449,13 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     return S_OK;
 }
 
-STDMETHODIMP CFireTextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
+STDMETHODIMP CFireTextService::OnKeyUp(ITfContext* pic, WPARAM /*wParam*/, LPARAM /*lParam*/,
                                        BOOL* pfEaten) {
     *pfEaten = FALSE;
-    // Shift 单击 -> 中英文切换
-    if (translator_.shiftChecker.OnKeyUp((UINT)wParam) && !config_.disable_en_mode) {
+    // Shift 单击 -> 中英文切换。检测已在 OnTestKeyUp 完成并置位 pendingShiftToggle_，
+    // 且已吃掉该 Shift 抬起，故此处必被调用；这里执行真正切换。
+    if (pendingShiftToggle_) {
+        pendingShiftToggle_ = false;
         FIRE_LOG(L"[WinFire] OnKeyUp: Shift single-click detected, toggling mode\n");
         fire::KeyEvent ev;
         ev.is_modifier_change = true;
