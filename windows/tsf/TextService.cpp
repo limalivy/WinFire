@@ -391,8 +391,15 @@ bool CFireTextService::ShouldEat(const fire::KeyEvent& ev) const {
         return false;
     // 组合快捷键交给宿主
     if (ev.has_command_shortcut_modifier()) return false;
-    // 有组字时几乎所有可处理键都要吃
-    if (!engine_->original_string().empty()) return true;
+    // 有组字时只吃有输出的键（文本或特殊键）；裸修饰键（Shift/Ctrl/Alt
+    // 单独按下）放行给系统，避免干扰 TSF 对 OnTestKeyUp 的调用链，
+    // 导致 shiftChecker 收不到抬起事件、中英切换失效。
+    if (!engine_->original_string().empty()) {
+        if (ev.is_alphabet() || !ev.text.empty() ||
+            ev.special != fire::SpecialKey::None)
+            return true;
+        return false;
+    }
     // 无组字：可见字母/标点/数字（数字仅在有组字时才处理，这里放行给引擎判断）
     if (ev.is_alphabet()) return true;
     if (ev.special == fire::SpecialKey::None && !ev.text.empty()) return true;  // 标点等
@@ -435,9 +442,26 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     BYTE kb[256];
     GetKeyboardState(kb);
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
-    // 注：Shift 单击检测已移至 OnTestKeyDown/OnTestKeyUp（那里每次按键必被调用）。
 
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb);
+
+    // Shift 单击中英切换：直接在此（OnKeyDown）处理，因为 OnTestKeyUp 对
+    // 裸修饰键（Shift/Ctrl/Alt）的回调在多数 TSF 宿主（Notepad/Word/Chrome…）
+    // 中不会被调用，仅少数控件（Explorer 地址栏等）会触发。
+    // 按下即生效的行为也更符合中文输入法用户直觉。
+    if (!config_.disable_en_mode && engine_ &&
+        (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) &&
+        ev.text.empty() && ev.special == fire::SpecialKey::None) {
+        fire::KeyEvent toggleEv;
+        toggleEv.toggle_input_mode_request = true;
+        bool eaten = ProcessKeyInEditSession(pic, toggleEv);
+        // 避免 OnKeyUp 中重复触发：清除 pendingShiftToggle_
+        pendingShiftToggle_ = false;
+        *pfEaten = eaten ? TRUE : FALSE;
+        FIRE_LOG(L"[WinFire] OnKeyDown: shift toggle, eaten=%d\n", eaten ? 1 : 0);
+        return S_OK;
+    }
+
     if (!ShouldEat(ev)) {
         *pfEaten = FALSE;
         FIRE_LOG(L"[WinFire] OnKeyDown: not eaten (ShouldEat=false)\n");
