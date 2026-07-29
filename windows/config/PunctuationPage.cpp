@@ -1,21 +1,12 @@
 //
-//  PunctuationPage.cpp
+//  PunctuationPage.cpp — 纯 Win32 实现
 //
 #include "ConfigApp.h"
 #include "PunctuationPage.h"
 
 #include "fire/types.h"
 
-IMPLEMENT_DYNCREATE(CPunctuationPage, CPropertyPage)
-
-BEGIN_MESSAGE_MAP(CPunctuationPage, CPropertyPage)
-    ON_CBN_SELCHANGE(IDC_CMB_PUNCT_MODE, &CPunctuationPage::OnPunctModeChanged)
-    ON_BN_CLICKED(IDC_BTN_PUNCT_SET, &CPunctuationPage::OnSetPunctValue)
-    ON_BN_CLICKED(IDC_BTN_PUNCT_RESET, &CPunctuationPage::OnResetPunct)
-    ON_NOTIFY(LVN_ITEMCHANGED, IDC_LIST_CUSTOM_PUNCT, &CPunctuationPage::OnListItemChanged)
-END_MESSAGE_MAP()
-
-CPunctuationPage::CPunctuationPage() : CPropertyPage(IDD_PAGE_PUNCT) {
+CPunctuationPage::CPunctuationPage() {
     m_punctMode     = (int)g_config.punctuation_mode;
     m_dotAfterNum   = g_config.enable_dot_after_number ? TRUE : FALSE;
     m_punctCommit   = g_config.enable_punctuation_commit ? TRUE : FALSE;
@@ -31,101 +22,87 @@ CPunctuationPage::CPunctuationPage() : CPropertyPage(IDD_PAGE_PUNCT) {
     }
 }
 
-void CPunctuationPage::DoDataExchange(CDataExchange* pDX) {
-    CPropertyPage::DoDataExchange(pDX);
-    DDX_CBIndex(pDX, IDC_CMB_PUNCT_MODE, m_punctMode);
-    DDX_Check(pDX, IDC_CHK_DOT_AFTER_NUM, m_dotAfterNum);
-    DDX_Check(pDX, IDC_CHK_PUNCT_COMMIT, m_punctCommit);
-    DDX_Check(pDX, IDC_CHK_DISABLE_EN, m_disableEn);
-    DDX_Check(pDX, IDC_CHK_DISABLE_TEMP_EN, m_disableTempEn);
-    DDX_Check(pDX, IDC_CHK_WS_ZH_EN, m_wsZhEn);
-}
+void CPunctuationPage::OnInitDialog() {
+    // 复选框
+    firecfg::SetCheck(hwnd, IDC_CHK_DOT_AFTER_NUM, m_dotAfterNum);
+    firecfg::SetCheck(hwnd, IDC_CHK_PUNCT_COMMIT, m_punctCommit);
+    firecfg::SetCheck(hwnd, IDC_CHK_DISABLE_EN, m_disableEn);
+    firecfg::SetCheck(hwnd, IDC_CHK_DISABLE_TEMP_EN, m_disableTempEn);
+    firecfg::SetCheck(hwnd, IDC_CHK_WS_ZH_EN, m_wsZhEn);
 
-BOOL CPunctuationPage::OnInitDialog() {
-    CPropertyPage::OnInitDialog();
-    if (auto* cb = (CComboBox*)GetDlgItem(IDC_CMB_PUNCT_MODE)) {
-        cb->ResetContent();
-        cb->AddString(_T("半角"));
-        cb->AddString(_T("全角"));
-        cb->AddString(_T("自定义"));
-        cb->SetCurSel(m_punctMode);
-    }
-    if (auto* lc = (CListCtrl*)GetDlgItem(IDC_LIST_CUSTOM_PUNCT)) {
-        lc->SetExtendedStyle(lc->GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-        lc->InsertColumn(0, _T("原字符"), LVCFMT_LEFT, 90);
-        lc->InsertColumn(1, _T("输出"), LVCFMT_LEFT, 120);
-    }
+    // 标点模式下拉框
+    firecfg::CbReset(hwnd, IDC_CMB_PUNCT_MODE);
+    firecfg::CbAdd(hwnd, IDC_CMB_PUNCT_MODE, L"半角");
+    firecfg::CbAdd(hwnd, IDC_CMB_PUNCT_MODE, L"全角");
+    firecfg::CbAdd(hwnd, IDC_CMB_PUNCT_MODE, L"自定义");
+    firecfg::CbSetSel(hwnd, IDC_CMB_PUNCT_MODE, m_punctMode);
+
+    // 自定义标点列表列
+    firecfg::LvInitColumns(hwnd, IDC_LIST_CUSTOM_PUNCT);
+    firecfg::LvAddColumn(hwnd, IDC_LIST_CUSTOM_PUNCT, 0, L"原字符", 90);
+    firecfg::LvAddColumn(hwnd, IDC_LIST_CUSTOM_PUNCT, 1, L"输出", 120);
+
     ReloadList();
     UpdateCustomUIEnabled();
-    return TRUE;
 }
 
 void CPunctuationPage::ReloadList() {
-    auto* lc = (CListCtrl*)GetDlgItem(IDC_LIST_CUSTOM_PUNCT);
-    if (!lc) return;
-    lc->DeleteAllItems();
+    firecfg::LvClear(hwnd, IDC_LIST_CUSTOM_PUNCT);
     int row = 0;
     for (const auto& kv : m_customPunct) {
-        CString k(CA2W(kv.first.c_str(), CP_UTF8).m_psz);
-        CString v(CA2W(kv.second.c_str(), CP_UTF8).m_psz);
-        lc->InsertItem(row, k);
-        lc->SetItemText(row, 1, v);
+        std::wstring k = firecfg::Utf8ToWide(kv.first);
+        std::wstring v = firecfg::Utf8ToWide(kv.second);
+        firecfg::LvInsertItem(hwnd, IDC_LIST_CUSTOM_PUNCT, row, k.c_str());
+        firecfg::LvSetItem(hwnd, IDC_LIST_CUSTOM_PUNCT, row, 1, v.c_str());
         ++row;
     }
 }
 
-// 仅在“自定义”模式下允许编辑自定义标点。
+// 仅在"自定义"模式下允许编辑自定义标点。
 void CPunctuationPage::UpdateCustomUIEnabled() {
     bool custom = (m_punctMode == (int)fire::PunctuationMode::Custom);
-    if (auto* w = GetDlgItem(IDC_LIST_CUSTOM_PUNCT)) w->EnableWindow(custom);
-    if (auto* w = GetDlgItem(IDC_EDIT_PUNCT_VALUE)) w->EnableWindow(custom);
-    if (auto* w = GetDlgItem(IDC_BTN_PUNCT_SET)) w->EnableWindow(custom);
-    if (auto* w = GetDlgItem(IDC_BTN_PUNCT_RESET)) w->EnableWindow(custom);
+    Enable(IDC_LIST_CUSTOM_PUNCT, custom);
+    Enable(IDC_EDIT_PUNCT_VALUE, custom);
+    Enable(IDC_BTN_PUNCT_SET, custom);
+    Enable(IDC_BTN_PUNCT_RESET, custom);
 }
 
-void CPunctuationPage::OnPunctModeChanged() {
-    if (auto* cb = (CComboBox*)GetDlgItem(IDC_CMB_PUNCT_MODE)) {
-        int sel = cb->GetCurSel();
+void CPunctuationPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
+    int code = HIWORD(wParam);
+    int id = LOWORD(wParam);
+    if (id == IDC_CMB_PUNCT_MODE && code == CBN_SELCHANGE) {
+        int sel = firecfg::CbGetSel(hwnd, IDC_CMB_PUNCT_MODE);
         if (sel >= 0) m_punctMode = sel;
+        UpdateCustomUIEnabled();
+    } else if (id == IDC_BTN_PUNCT_SET && code == BN_CLICKED) {
+        // 把编辑框内容写回选中行对应的原字符映射。
+        int sel = firecfg::LvGetSelItem(hwnd, IDC_LIST_CUSTOM_PUNCT);
+        if (sel < 0) {
+            MsgBox(L"请先在列表中选择一个原字符", L"提示", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        std::wstring key = firecfg::LvGetItemText(hwnd, IDC_LIST_CUSTOM_PUNCT, sel, 0);
+        std::wstring val = firecfg::GetText(hwnd, IDC_EDIT_PUNCT_VALUE);
+        m_customPunct[firecfg::WideToUtf8(key)] = firecfg::WideToUtf8(val);
+        firecfg::LvSetItem(hwnd, IDC_LIST_CUSTOM_PUNCT, sel, 1, val.c_str());
+    } else if (id == IDC_BTN_PUNCT_RESET && code == BN_CLICKED) {
+        // 恢复为默认中文标点映射。
+        m_customPunct.clear();
+        for (const auto& kv : fire::default_punctuation()) m_customPunct[kv.first] = kv.second;
+        ReloadList();
     }
-    UpdateCustomUIEnabled();
 }
 
-// 选中列表某行时，把其输出值填入编辑框，方便修改。
-void CPunctuationPage::OnListItemChanged(NMHDR* pNMHDR, LRESULT* pResult) {
-    auto* p = reinterpret_cast<NMLISTVIEW*>(pNMHDR);
-    if ((p->uChanged & LVIF_STATE) && (p->uNewState & LVIS_SELECTED)) {
-        auto* lc = (CListCtrl*)GetDlgItem(IDC_LIST_CUSTOM_PUNCT);
-        if (lc) SetDlgItemText(IDC_EDIT_PUNCT_VALUE, lc->GetItemText(p->iItem, 1));
+void CPunctuationPage::OnNotify(LPNMHDR nm, LRESULT* pResult) {
+    if (nm->idFrom == IDC_LIST_CUSTOM_PUNCT && nm->code == LVN_ITEMCHANGED) {
+        auto* p = reinterpret_cast<NMLISTVIEW*>(nm);
+        if ((p->uChanged & LVIF_STATE) && (p->uNewState & LVIS_SELECTED)) {
+            // 选中列表某行时，把其输出值填入编辑框，方便修改。
+            std::wstring v = firecfg::LvGetItemText(hwnd, IDC_LIST_CUSTOM_PUNCT, p->iItem, 1);
+            firecfg::SetText(hwnd, IDC_EDIT_PUNCT_VALUE, v);
+        }
     }
     *pResult = 0;
-}
-
-// 把编辑框内容写回选中行对应的原字符映射。
-void CPunctuationPage::OnSetPunctValue() {
-    auto* lc = (CListCtrl*)GetDlgItem(IDC_LIST_CUSTOM_PUNCT);
-    if (!lc) return;
-    POSITION pos = lc->GetFirstSelectedItemPosition();
-    if (!pos) {
-        MessageBox(_T("请先在列表中选择一个原字符"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-        return;
-    }
-    int sel = lc->GetNextSelectedItem(pos);
-    CString key = lc->GetItemText(sel, 0);
-    CString val;
-    GetDlgItemText(IDC_EDIT_PUNCT_VALUE, val);
-
-    std::string k = CT2A(key, CP_UTF8).m_psz;
-    std::string v = CT2A(val, CP_UTF8).m_psz;
-    m_customPunct[k] = v;
-    lc->SetItemText(sel, 1, val);
-}
-
-// 恢复为默认中文标点映射。
-void CPunctuationPage::OnResetPunct() {
-    m_customPunct.clear();
-    for (const auto& kv : fire::default_punctuation()) m_customPunct[kv.first] = kv.second;
-    ReloadList();
 }
 
 void CPunctuationPage::SyncToConfig() {
@@ -138,8 +115,25 @@ void CPunctuationPage::SyncToConfig() {
     g_config.custom_punctuation_settings = m_customPunct;
 }
 
-BOOL CPunctuationPage::OnApply() {
-    if (!UpdateData(TRUE)) return FALSE;
+bool CPunctuationPage::OnApply() {
+    m_dotAfterNum   = firecfg::GetCheck(hwnd, IDC_CHK_DOT_AFTER_NUM);
+    m_punctCommit   = firecfg::GetCheck(hwnd, IDC_CHK_PUNCT_COMMIT);
+    m_disableEn     = firecfg::GetCheck(hwnd, IDC_CHK_DISABLE_EN);
+    m_disableTempEn = firecfg::GetCheck(hwnd, IDC_CHK_DISABLE_TEMP_EN);
+    m_wsZhEn        = firecfg::GetCheck(hwnd, IDC_CHK_WS_ZH_EN);
+    m_punctMode     = firecfg::CbGetSel(hwnd, IDC_CMB_PUNCT_MODE);
+    if (m_punctMode < 0) m_punctMode = 1;
     SyncToConfig();
-    return CPropertyPage::OnApply();
+    return true;
+}
+
+HPROPSHEETPAGE CreatePunctuationPage(CPunctuationPage& page) {
+    PROPSHEETPAGEW psp = {0};
+    psp.dwSize = sizeof(psp);
+    psp.dwFlags = PSP_DEFAULT;
+    psp.hInstance = GetModuleHandleW(nullptr);
+    psp.pszTemplate = MAKEINTRESOURCEW(IDD_PAGE_PUNCT);
+    psp.pfnDlgProc = PageDlgProc;
+    psp.lParam = (LPARAM)&page;
+    return CreatePropertySheetPageW(&psp);
 }

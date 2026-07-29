@@ -9,13 +9,13 @@ Windows 平台各层只做「宿主适配 + UI 渲染」。
 - **TSF COM 骨架 → ATL（纯原生 COM）**：`windows/tsf/`
 - **候选窗 → 纯 VC/Win32 + GDI+ 自绘**：`windows/candidate_window/`
 - **状态机 + 词库 → 现代 C++17 跨平台内核**：`core/`
-- **配置界面 → MFC**：`windows/config/`
+- **配置界面 → 纯 Win32（PropertySheet API）**：`windows/config/`
 - **词库构建工具**：`tablebuilder/`
 
 宿主进程（Word / Chrome / Notepad …）加载 `fire_tsf.dll`（TSF Text Input Processor，
 ATL 纯原生 COM）。DLL 内 TSF 适配层把 Windows 消息翻译成 `fire::KeyEvent`，交给
 `fire_core`（跨平台 C++17 内核）处理，内核通过 `fire::InputClient` 回调驱动组字区、
-上屏、以及候选窗（Win32 + GDI+ 自绘的无焦点浮窗）。配置界面 `fire_config.exe`（MFC）
+上屏、以及候选窗（Win32 + GDI+ 自绘的无焦点浮窗）。配置界面 `fire_config.exe`（纯 Win32）
 读写 `config.json` / `user-dict.txt`，并调用 `tablebuilder` 生成 `wb_py_dict.sqlite`。
 
 ## 2. 目录结构
@@ -51,7 +51,7 @@ winFire/
 ├── windows/                    # Windows 平台层
 │   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
-│   └── config/                 # MFC 配置界面（fire_config.exe）
+│   └── config/                 # 纯 Win32 配置界面（fire_config.exe，PropertySheet + GDI）
 ├── installer/                  # Inno Setup 脚本与预构建资源
 │   ├── winfire.iss             # 安装包脚本
 │   └── staging/                # 预构建词库 + 默认 config.json（随包分发）
@@ -143,7 +143,10 @@ cd build && ctest --output-on-failure
 CMake 选项（默认 ON）：`BUILD_CORE` / `BUILD_TESTS` / `BUILD_TABLEBUILDER`。
 sqlite3 从系统 SDK / homebrew 定位（`find_package(SQLite3)`，回退 `-lsqlite3`）。
 
-### 5.2 Windows 层（MSBuild，需 VS2022 + ATL/MFC + Windows SDK 10）
+### 5.2 Windows 层（MSBuild，需 VS2022 + ATL + Windows SDK 10）
+
+> 注：fire_config 已从 MFC 迁移到纯 Win32（PropertySheet API），不再需要 MFC 组件。
+> fire_tsf.dll 仍需 ATL（纯原生 COM）。
 
 ```powershell
 # 编译 TSF TIP DLL（fire_tsf.dll）
@@ -256,7 +259,17 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - **⚙ 菜单图标**：候选窗右上角绘制齿轮图标，点击启动 `fire_config.exe`（通过 `ShellExecute`，
   自动定位同目录下的配置工具），便于用户快速进入设置而无需到开始菜单查找。
 
-### 6.3 配置界面（MFC，windows/config/）
+### 6.3 配置界面（纯 Win32 PropertySheet，windows/config/）
+- **UI 框架**：纯 Win32 `PropertySheetW` + `PROPSHEETPAGE` + 通用控件（ListView/ComboBox/Edit/Button），
+  无 MFC 依赖。`UiBase.h` 提供 `PageBase` 基类（封装 HWND + OnInit/OnApply/OnCommand/OnNotify 钩子）、
+  UTF-8/UTF-16 互转（`Utf8ToWide`/`WideToUtf8`，替代 MFC 的 `CA2W`/`CT2A`）和控件读写辅助。
+- **对话框过程**：`PageDlgProc` 通用回调，通过 `PROPSHEETPAGE.lParam` 携带 `PageBase*`，
+  `WM_INITDIALOG` 时存到 `DWLP_USER`，后续消息转发给派生类。
+- **资源脚本**：`ConfigApp.rc` 用 `<winres.h>` 替代 `<afxres.h>`，对话框模板与 MFC 版完全兼容。
+- **静态链接**：`/MT` 编译，链接 `comctl32.lib`/`comdlg32.lib`，无外部 DLL 依赖，
+  EXE 体积约 2.7MB（MFC 静态版约 7.4MB，减 62.7%）。
+- **坑点**：`PROPSHEETHEADER.dwFlags` 用 `phpage` 数组（已 `CreatePropertySheetPage` 创建的句柄）时
+  **不能**带 `PSH_PROPSHEETPAGE`（该标志表示用 `ppsp` 结构数组，会让 PropertySheet 把 `phpage` 当指针解引用导致 0xC0000005）。
 - 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理。
   - 输入设置：词组/动态调频/反查/显示编码/五笔编码提示/唯一候选自动上屏/候选个数/编码方案/候选方向/顶字/中英切换键。
   - 标点与中英文：标点模式（中文 / 英文）、中英切换键。
@@ -272,5 +285,5 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - 进程模型：macOS IMK 独立进程共享状态；Windows TSF 是 in-process DLL，每个宿主进程各自加载。
   共享状态建议通过后台服务或共享文件 + 文件监听同步（初版可只读共享词库，写入串行化）。
 - SQLCipher -> SQLite：初版用普通 SQLite；如需加密再引入 SQLCipher。
-- UTF-8 / UTF-16 边界：内核统一 UTF-8；TSF/GDI+/MFC 边界处与 wchar_t(UTF-16) 互转。
+- UTF-8 / UTF-16 边界：内核统一 UTF-8；TSF/GDI+/Win32 边界处与 wchar_t(UTF-16) 互转（`firecfg::Utf8ToWide`/`WideToUtf8`）。
 - UI 不要求 1:1 复刻，主要逻辑保持一致。

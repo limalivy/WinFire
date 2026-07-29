@@ -1,6 +1,6 @@
-// 微火五笔 Windows 配置界面资源脚本（MFC 对话框模板）
+// 微火五笔 Windows 配置界面资源脚本（纯 Win32 对话框模板）
 #pragma code_page(65001)  // 声明本文件为 UTF-8 编码，避免 rc.exe 用系统 GBK 误解析中文
-#include <afxres.h>
+#include <winres.h>       // 标准 Windows 资源常量（DS_/WS_/BS_/LVS_ 等），替代 <afxres.h>
 #include "InputSettingsPage.h"
 #include "PunctuationPage.h"
 #include "AppModePage.h"

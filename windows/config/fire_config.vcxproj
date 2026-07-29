@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 微火输入法 配置界面（MFC）EXE 工程。需在 Windows + VS2022 中构建。 -->
+<!-- 微火输入法 配置界面（纯 Win32）EXE 工程。需在 Windows + VS2022 中构建。 -->
 <Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
@@ -21,7 +21,6 @@
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <UseOfMfc>Static</UseOfMfc>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
@@ -34,7 +33,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>shell32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shell32.lib;advapi32.lib;user32.lib;comctl32.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>__cplusplus;_M_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -58,6 +57,7 @@
     <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="UiBase.h" />
     <ClInclude Include="ConfigApp.h" />
     <ClInclude Include="InputSettingsPage.h" />
     <ClInclude Include="PunctuationPage.h" />

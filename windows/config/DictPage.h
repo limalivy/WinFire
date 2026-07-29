@@ -1,9 +1,9 @@
 //
-//  DictPage.h — “词库管理”属性页（导入码表 / 生成 sqlite / 编辑用户词库）
+//  DictPage.h — "词库管理"属性页（导入码表 / 生成 sqlite / 编辑用户词库）（纯 Win32）
 //
 #pragma once
 #ifndef RC_INVOKED
-#include <afxdlgs.h>
+#include "UiBase.h"
 #endif
 
 #define IDD_PAGE_DICT            2003
@@ -15,20 +15,16 @@
 #define IDC_BTN_EDIT_USERDICT    2306
 #define IDC_STATIC_BUILD_STATUS  2307
 
-class CDictPage : public CPropertyPage {
-    DECLARE_DYNCREATE(CDictPage)
+class CDictPage : public PageBase {
 public:
     CDictPage();
 
-    CString m_wbTablePath;
-    CString m_pyTablePath;
+    std::wstring m_wbTablePath;
+    std::wstring m_pyTablePath;
 
 protected:
-    BOOL OnInitDialog() override;
-    void DoDataExchange(CDataExchange* pDX) override;
-    afx_msg void OnBrowseWb();
-    afx_msg void OnBrowsePy();
-    afx_msg void OnBuildDict();
-    afx_msg void OnEditUserDict();
-    DECLARE_MESSAGE_MAP()
+    void OnInitDialog() override;
+    void OnCommand(WPARAM wParam, LPARAM lParam) override;
 };
+
+HPROPSHEETPAGE CreateDictPage(CDictPage& page);

@@ -9,7 +9,7 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - **TSF COM 骨架**：ATL 纯原生 COM 实现
 - **候选窗**：纯 Win32 + GDI+ 自绘
 - **状态机 + 词库**：跨平台 C++17 内核（不依赖 Windows / macOS API）
-- **配置界面**：MFC
+- **配置界面**：纯 Win32（PropertySheet API + GDI 自绘控件，无 MFC 依赖）
 - **词库构建工具**：独立 CMake 工程
 
 ## 特点
@@ -17,7 +17,7 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - **跨平台内核**：状态机、词库查询、标点转换、统计等核心逻辑以纯 C++17 实现，可在 macOS / Linux 上编译验证（`cmake + ctest`），便于回归测试。
 - **平台层薄**：Windows 层只做按键翻译、组字区管理、UI 渲染，不包含业务逻辑。
 - **原生 COM**：TSF TIP 使用 ATL 纯原生 COM，不依赖 .NET / WPF / Electron，加载到任意宿主进程（QQ / Word / Chrome…）都能稳定工作。
-- **静态链接**：fire_tsf.dll / fire_config.exe 均静态链接 CRT + ATL/MFC，避免与宿主进程的 CRT 版本冲突。
+- **静态链接**：fire_tsf.dll / fire_config.exe 均静态链接 CRT + ATL（fire_tsf）与 CRT（fire_config），避免与宿主进程的 CRT 版本冲突；fire_config.exe 不再依赖 MFC，安装包体积显著缩小。
 - **数据隔离**：程序文件在 `%ProgramFiles%\WinFire\`，用户数据在 `%APPDATA%\WinFire\`，卸载默认保留用户数据。
 
 ## 当前程序功能
@@ -57,7 +57,7 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - 右键菜单：直接选中 / 英模式
 - Tooltip：「微火五笔：点击切换中/英文」
 
-### 配置工具（fire_config.exe，MFC）
+### 配置工具（fire_config.exe，纯 Win32）
 属性页式界面，包含：
 - **输入设置**：词组输入 / 动态调频 / 反查 / 候选窗内显示编码 / 五笔编码提示 / 唯一候选自动上屏 / 候选个数 / 编码方案 / 候选方向 / 顶字规则 / 中英切换键
 - **标点与中英文**：标点模式（中文 / 英文）、按应用模式开关、应用固定模式列表
@@ -90,7 +90,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-Windows 层（`windows/`）不参与 CMake，需在 Windows + Visual Studio 2022（含 ATL / MFC 组件、Windows SDK 10）中用各自的 `.vcxproj` 构建：
+Windows 层（`windows/`）不参与 CMake，需在 Windows + Visual Studio 2022（含 ATL 组件、Windows SDK 10）中用各自的 `.vcxproj` 构建（注：fire_config 已迁移至纯 Win32，不再需要 MFC 组件）：
 
 ```powershell
 # 编译 TSF TIP DLL
@@ -121,7 +121,7 @@ winFire/
 ├── windows/                    # Windows 平台层
 │   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
-│   └── config/                 # MFC 配置界面（fire_config.exe）
+│   └── config/                 # 纯 Win32 配置界面（fire_config.exe）
 ├── installer/                  # Inno Setup 脚本与预构建资源
 ├── scripts/                    # PowerShell 构建/安装/卸载脚本
 ├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）

@@ -1,9 +1,9 @@
 //
-//  InputSettingsPage.h — “输入设置”属性页
+//  InputSettingsPage.h — "输入设置"属性页（纯 Win32）
 //
 #pragma once
 #ifndef RC_INVOKED
-#include <afxdlgs.h>
+#include "UiBase.h"
 #endif
 
 // 控件 ID（对应 .rc 中的资源）
@@ -20,8 +20,7 @@
 #define IDC_CHK_WUBI_AUTO_COMMIT 2110
 #define IDC_CMB_TOGGLE_KEY       2111
 
-class CInputSettingsPage : public CPropertyPage {
-    DECLARE_DYNCREATE(CInputSettingsPage)
+class CInputSettingsPage : public PageBase {
 public:
     CInputSettingsPage();
 
@@ -38,9 +37,10 @@ public:
     int  m_toggleKey = 0;      // 0=Shift 1=Control 2=Command(Win) 3=Option(Alt)
 
 protected:
-    BOOL OnInitDialog() override;
-    void DoDataExchange(CDataExchange* pDX) override;
-    BOOL OnApply() override;
+    void OnInitDialog() override;
+    bool OnApply() override;
     void SyncToConfig();
-    DECLARE_MESSAGE_MAP()
 };
+
+// 工厂：创建属性页句柄（供 PropertySheet 注册）
+HPROPSHEETPAGE CreateInputSettingsPage(CInputSettingsPage& page);

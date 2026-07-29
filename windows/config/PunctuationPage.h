@@ -1,10 +1,9 @@
 //
-//  PunctuationPage.h — “标点与中英文”属性页
+//  PunctuationPage.h — "标点与中英文"属性页（纯 Win32）
 //
 #pragma once
 #ifndef RC_INVOKED
-#include <afxdlgs.h>
-#include <afxcmn.h>
+#include "UiBase.h"
 #endif
 #include <string>
 #include <unordered_map>
@@ -22,8 +21,7 @@
 #define IDC_BTN_PUNCT_SET        2209
 #define IDC_BTN_PUNCT_RESET      2210
 
-class CPunctuationPage : public CPropertyPage {
-    DECLARE_DYNCREATE(CPunctuationPage)
+class CPunctuationPage : public PageBase {
 public:
     CPunctuationPage();
 
@@ -35,16 +33,11 @@ public:
     BOOL m_wsZhEn = TRUE;
 
 protected:
-    BOOL OnInitDialog() override;
-    void DoDataExchange(CDataExchange* pDX) override;
-    BOOL OnApply() override;
+    void OnInitDialog() override;
+    bool OnApply() override;
+    void OnCommand(WPARAM wParam, LPARAM lParam) override;
+    void OnNotify(LPNMHDR nm, LRESULT* pResult) override;
     void SyncToConfig();
-
-    afx_msg void OnPunctModeChanged();
-    afx_msg void OnSetPunctValue();
-    afx_msg void OnResetPunct();
-    afx_msg void OnListItemChanged(NMHDR* pNMHDR, LRESULT* pResult);
-    DECLARE_MESSAGE_MAP()
 
 private:
     // 当前编辑中的自定义标点映射（原字符 -> 输出），Apply 时写回 g_config。
@@ -52,3 +45,5 @@ private:
     void ReloadList();
     void UpdateCustomUIEnabled();
 };
+
+HPROPSHEETPAGE CreatePunctuationPage(CPunctuationPage& page);
