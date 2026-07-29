@@ -70,6 +70,14 @@ static void create_table(sqlite3* db, const string& tableName) {
         // 新建表：把自增起点抬到 100000（与原实现一致）。
         sql = "insert into sqlite_sequence(name, seq) values('" + tableName + "', 100000)";
         sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+    } else {
+        // 表已存在（db 文件未被删除——通常因 TSF 宿主进程持有句柄导致 DeleteFile 失败）：
+        // 清空旧数据并重置自增计数器，避免新码表条目与历史数据混合，
+        // 导致查询仍返回旧码表候选（如：用 jdb_cp 替换 wubi 后仍命中旧 wubi 条目）。
+        sql = "delete from " + tableName;
+        sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+        sql = "update sqlite_sequence set seq = 100000 where name = '" + tableName + "'";
+        sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
     }
     cout << "dict table created successfully" << endl;
 
@@ -96,6 +104,11 @@ static void build_wb_py_dict() {
     }
     if (!existed) {
         sqlite3_exec(db, "insert into sqlite_sequence(name, seq) values('wb_py_dict', 100000)",
+                     nullptr, nullptr, nullptr);
+    } else {
+        // 表已存在：清空旧数据并重置自增计数器，避免合并时把旧 wb_dict/py_dict 数据再次插入。
+        sqlite3_exec(db, "delete from wb_py_dict", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "update sqlite_sequence set seq = 100000 where name = 'wb_py_dict'",
                      nullptr, nullptr, nullptr);
     }
 

@@ -144,6 +144,17 @@ void DictManager::clear_query_cache() {
     cache_lru_.clear();
 }
 
+void DictManager::check_db_changed() {
+    if (config_.db_path.empty()) return;
+    std::error_code ec;
+    auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
+    if (ec) return;  // 文件不存在或不可访问：保持现状，由 prepare_statement 处理
+    if (mtime != last_db_mtime_) {
+        last_db_mtime_ = mtime;
+        reinit();  // 关闭并重新打开数据库，清空 stmt 缓存与查询缓存
+    }
+}
+
 void DictManager::cache_put(const std::string& key, const CacheEntry& entry) {
     auto it = cache_map_.find(key);
     if (it != cache_map_.end()) {
@@ -310,6 +321,7 @@ int DictManager::min_id_from_dict_table() {
 
 // 对应 getReverseLookupCandidates
 QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin, int page) {
+    check_db_changed();
     prepare_statement();
     QueryResult result;
     if (!db_) return result;
@@ -350,6 +362,7 @@ QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin
 
 // 对应 getCandidates
 QueryResult DictManager::get_candidates(const std::string& query, int page) {
+    check_db_changed();
     prepare_statement();
     QueryResult result;
     if (query.empty()) return result;

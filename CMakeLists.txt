@@ -17,6 +17,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC 默认按系统代码页（中文 Windows 为 GBK/936）解析源文件，导致含 UTF-8 中文
+# 的头文件（如 punctuation.h 的标点字面量）被误读为乱码。强制 /utf-8 修正。
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(BUILD_CORE "Build fire_core static library" ON)
 option(BUILD_TESTS "Build core unit tests and register ctest" ON)
 option(BUILD_TABLEBUILDER "Build wubi/pinyin table builder tool" ON)

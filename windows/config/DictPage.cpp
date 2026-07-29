@@ -8,6 +8,8 @@
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <fstream>
+#include <cctype>
 
 CDictPage::CDictPage() {
     m_wbTablePath = firecfg::Utf8ToWide(g_config.wb_table_path);
@@ -40,6 +42,65 @@ std::vector<std::wstring> CDictPage::ScanTablesDir() {
 static std::wstring Basename(const std::wstring& path) {
     size_t p = path.find_last_of(L"\\/");
     return (p == std::wstring::npos) ? path : path.substr(p + 1);
+}
+
+// 校验码表格式：每行应为 "code<TAB>text..."，首列（编码）必须为 ASCII 字母。
+// 返回 true 表示格式正确；false 时 errMsg 给出中文错误描述（含首个出错行号）。
+// 检查前 1000 个非空行，足够发现格式问题且不阻塞 UI。
+// 背景：tablebuilder 把 columns[0] 当编码，若码表是 "字 编码"（字在前）格式，
+// 会把文字写入 code 列、字母写入 text 列，导致查询返回空、空格上屏字母。
+static bool ValidateCodeTableFormat(const std::wstring& path, std::wstring& errMsg) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+        errMsg = L"无法打开码表文件";
+        return false;
+    }
+    std::string line;
+    int lineNo = 0;
+    int checkedNonEmpty = 0;
+    const int kMaxCheckLines = 1000;
+    while (std::getline(ifs, line)) {
+        ++lineNo;
+        // 跳过空行（只含空白）
+        bool allSpace = true;
+        for (unsigned char c : line) {
+            if (c != ' ' && c != '\t' && c != '\r' && c != '\n') { allSpace = false; break; }
+        }
+        if (allSpace) continue;
+        if (++checkedNonEmpty > kMaxCheckLines) break;
+
+        // 跳过前导空白，收集首列
+        size_t i = 0, n = line.size();
+        while (i < n && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= n) {
+            errMsg = L"第 " + std::to_wstring(lineNo) + L" 行：首列为空";
+            return false;
+        }
+        std::string firstCol;
+        while (i < n && line[i] != ' ' && line[i] != '\t' && line[i] != '\r' && line[i] != '\n') {
+            firstCol += line[i++];
+        }
+        // 首列必须全 ASCII 字母（a-z/A-Z）。UTF-8 下中文字符首字节 >= 0x80。
+        for (unsigned char c : firstCol) {
+            if (c >= 0x80 || !isalpha(c)) {
+                errMsg = L"第 " + std::to_wstring(lineNo) +
+                         L" 行：首列应为编码（ASCII 字母 a-z/A-Z），但发现非编码字符。"
+                         L"请确认码表格式为 '编码<TAB>词条'（编码在前，非 '词条<空格>编码'）";
+                return false;
+            }
+        }
+        // 必须有第二列（词条）
+        while (i < n && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= n) {
+            errMsg = L"第 " + std::to_wstring(lineNo) + L" 行：缺少词条（仅有编码无对应文字）";
+            return false;
+        }
+    }
+    if (checkedNonEmpty == 0) {
+        errMsg = L"码表文件为空或无有效数据行";
+        return false;
+    }
+    return true;
 }
 
 // 填充下拉并尝试匹配 savedPath 对应文件名。
@@ -119,6 +180,20 @@ void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
         if (!hasWb && !hasPy) {
             firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS,
                 L"请先在下拉中选择存在的五笔或拼音码表（tables 目录下无可用文件）");
+            return;
+        }
+
+        // 格式校验：码表必须为 "code<TAB>text"（编码在前），避免误用 "字 编码" 格式
+        // 导致 tablebuilder 把文字当编码写入、查询返回空、空格上屏字母。
+        std::wstring errMsg;
+        if (hasWb && !ValidateCodeTableFormat(m_wbTablePath, errMsg)) {
+            firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS,
+                (L"五笔码表格式错误：" + errMsg).c_str());
+            return;
+        }
+        if (hasPy && !ValidateCodeTableFormat(m_pyTablePath, errMsg)) {
+            firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS,
+                (L"拼音码表格式错误：" + errMsg).c_str());
             return;
         }
 

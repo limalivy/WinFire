@@ -4,6 +4,7 @@
 //
 #pragma once
 
+#include <filesystem>
 #include <list>
 #include <string>
 #include <unordered_map>
@@ -82,6 +83,12 @@ private:
     void clear_query_cache();
     void cache_put(const std::string& key, const CacheEntry& entry);
     bool cache_get(const std::string& key, CacheEntry& out);
+
+    // 检测 db 文件是否被外部进程（fire_config.exe 词库重建）修改：
+    // mtime 变化时调用 reinit() 重新打开数据库并清空查询缓存，
+    // 避免输入时仍命中旧词库的 LRU 缓存导致"改了码表不生效"。
+    std::filesystem::file_time_type last_db_mtime_{};
+    void check_db_changed();
 
     std::string cache_key(const std::string& query) const;
     std::string statement_sql(bool use_pagination) const;
