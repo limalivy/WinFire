@@ -7,15 +7,12 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File dev_reload.ps1
 #   powershell -ExecutionPolicy Bypass -File dev_reload.ps1 -SkipBuild
-#   powershell -ExecutionPolicy Bypass -File dev_reload.ps1 -AlsoConfig
 # ============================================================================
 #Requires -RunAsAdministrator
 [CmdletBinding()]
 param(
-    # Skip MSBuild, use existing binaries
-    [switch]$SkipBuild,
-    # Also build + deploy fire_config.exe
-    [switch]$AlsoConfig
+    # Skip all builds, use existing binaries
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,13 +24,13 @@ if (-not (Test-Path $VersionFile)) { $VersionFile = Join-Path $RepoRoot "VERSION
 $Version = (Get-Content $VersionFile -Raw).Trim()
 
 $InstallDir   = "$env:ProgramFiles\WinFire"
-$TsfDllSrc    = "$RepoRoot\windows\tsf\x64\Release\fire_tsf.dll"
+$TsfDllSrc    = "$RepoRoot\windows\tsf\x64\Debug\fire_tsf.dll"
 $TsfDllDst    = "$InstallDir\fire_tsf_DEV.dll"
-$ConfigExeSrc = "$RepoRoot\windows\config\x64\Release\fire_config.exe"
+$ConfigExeSrc = "$RepoRoot\windows\config\x64\Debug\fire_config.exe"
 $ConfigExeDst = "$InstallDir\fire_config.exe"
-# tablebuilder.exe: CMake builds it under build\Release\ or build\
-if (Test-Path "$RepoRoot\build\Release\tablebuilder.exe") {
-    $TablebuilderSrc = "$RepoRoot\build\Release\tablebuilder.exe"
+# tablebuilder.exe: CMake builds it under build\Debug\ or build\
+if (Test-Path "$RepoRoot\build\Debug\tablebuilder.exe") {
+    $TablebuilderSrc = "$RepoRoot\build\Debug\tablebuilder.exe"
 } else {
     $TablebuilderSrc = "$RepoRoot\build\tablebuilder.exe"
 }
@@ -66,15 +63,27 @@ Write-Host ""
 if (-not $SkipBuild) {
     Step "Building fire_tsf.dll..."
     $msbuild = Find-MSBuild
-    & $msbuild "$RepoRoot\windows\tsf\fire_tsf.vcxproj" /p:Configuration=Release /p:Platform=x64 /t:Build /v:minimal
+    & $msbuild "$RepoRoot\windows\tsf\fire_tsf.vcxproj" /p:Configuration=Debug /p:Platform=x64 /t:Build /v:minimal
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
-    Write-Host "  [OK] fire_tsf.dll" -ForegroundColor Green
+    Write-Host "  [OK] fire_tsf.dll (Debug)" -ForegroundColor Green
 
-    if ($AlsoConfig) {
-        & $msbuild "$RepoRoot\windows\config\fire_config.vcxproj" /p:Configuration=Release /p:Platform=x64 /t:Build /v:minimal
-        if ($LASTEXITCODE -ne 0) { throw "Config build failed" }
-        Write-Host "  [OK] fire_config.exe" -ForegroundColor Green
+    & $msbuild "$RepoRoot\windows\config\fire_config.vcxproj" /p:Configuration=Debug /p:Platform=x64 /t:Build /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "Config build failed" }
+    Write-Host "  [OK] fire_config.exe (Debug)" -ForegroundColor Green
+
+    $cmakeBuildDir = "$RepoRoot\build"
+    if (-not (Test-Path "$cmakeBuildDir\CMakeCache.txt")) {
+        & cmake -S $RepoRoot -B $cmakeBuildDir -DBUILD_CORE=ON -DBUILD_TESTS=OFF -DBUILD_TABLEBUILDER=ON 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
     }
+    & cmake --build $cmakeBuildDir --config Debug --target tablebuilder 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "tablebuilder build failed" }
+    if (Test-Path "$cmakeBuildDir\Debug\tablebuilder.exe") {
+        $script:TablebuilderSrc = "$cmakeBuildDir\Debug\tablebuilder.exe"
+    } else {
+        $script:TablebuilderSrc = "$cmakeBuildDir\tablebuilder.exe"
+    }
+    Write-Host "  [OK] tablebuilder.exe (Debug)" -ForegroundColor Green
 } else {
     Step "Skipping build..."
     if (-not (Test-Path $TsfDllSrc)) { throw "fire_tsf.dll not found at $TsfDllSrc" }
@@ -141,17 +150,9 @@ Get-ChildItem -Path $InstallDir -Filter "fire_tsf_0.*.dll" -ErrorAction Silently
     & regsvr32 /s /u $_.FullName 2>&1 | Out-Null
 }
 
-if ($AlsoConfig -or (Test-Path $ConfigExeSrc)) {
-    Copy-Item $ConfigExeSrc $ConfigExeDst -Force -ErrorAction SilentlyContinue
-}
-
-if (Test-Path $TablebuilderSrc) {
-    Copy-Item $TablebuilderSrc $TablebuilderDst -Force
-    Write-Host "  [OK] tablebuilder.exe" -ForegroundColor Green
-} elseif (-not (Test-Path $TablebuilderDst)) {
-    Write-Host "  [WARN] tablebuilder.exe not found; dict generation in config tool will fail" -ForegroundColor Yellow
-    Write-Host "         Build it: cmake --build build --target tablebuilder --config Release" -ForegroundColor DarkGray
-}
+Copy-Item $ConfigExeSrc $ConfigExeDst -Force -ErrorAction SilentlyContinue
+Copy-Item $TablebuilderSrc $TablebuilderDst -Force
+Write-Host "  [OK] fire_config.exe + tablebuilder.exe" -ForegroundColor Green
 
 # ---- 4. Init user data ----
 Step "Checking user data..."
