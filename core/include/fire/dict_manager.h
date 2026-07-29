@@ -14,6 +14,7 @@
 #include "fire/config.h"
 
 struct sqlite3;
+struct sqlite3_stmt;
 
 namespace fire {
 
@@ -66,6 +67,15 @@ private:
     std::unordered_map<std::string, CacheEntry> cache_map_;
     std::list<std::string> cache_lru_;
     static constexpr size_t kCacheLimit = 5000;
+
+    // 热路径查询语句缓存：以完整 SQL 文本为 key 复用已编译的 sqlite3_stmt*，
+    // 避免每次按键都 sqlite3_prepare_v2 重新编译 SQL（P0 优化）。
+    std::unordered_map<std::string, sqlite3_stmt*> stmt_cache_;
+    // 取一条与 sql 对应的已编译语句：命中则 reset + clear_bindings 复用，
+    // 未命中则编译并存入缓存。失败或 db_ 为空返回 nullptr。
+    sqlite3_stmt* acquire_stmt(const std::string& sql);
+    // 销毁所有缓存语句（关闭数据库前必须调用）。
+    void finalize_statements();
 
     void prepare_statement();
     void clear_query_cache();

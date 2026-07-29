@@ -89,10 +89,39 @@ void DictManager::reinit() {
 
 void DictManager::close() {
     if (db_) {
+        // 关闭数据库前必须先 finalize 所有缓存语句，否则 sqlite3_close_v2 会因
+        // 存在未释放的 prepared statement 而延迟释放句柄。
+        finalize_statements();
         sqlite3_close_v2(db_);
         db_ = nullptr;
     }
     clear_query_cache();
+}
+
+// 取一条与 sql 对应的已编译语句。命中缓存则 reset + clear_bindings 后复用，
+// 未命中则编译并存入缓存。避免热路径上重复 prepare/finalize 同一条 SQL。
+sqlite3_stmt* DictManager::acquire_stmt(const std::string& sql) {
+    if (!db_) return nullptr;
+    auto it = stmt_cache_.find(sql);
+    if (it != stmt_cache_.end()) {
+        sqlite3_reset(it->second);
+        sqlite3_clear_bindings(it->second);
+        return it->second;
+    }
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        if (stmt) sqlite3_finalize(stmt);
+        return nullptr;
+    }
+    stmt_cache_[sql] = stmt;
+    return stmt;
+}
+
+void DictManager::finalize_statements() {
+    for (auto& kv : stmt_cache_) {
+        if (kv.second) sqlite3_finalize(kv.second);
+    }
+    stmt_cache_.clear();
 }
 
 void DictManager::prepare_statement() {
@@ -294,11 +323,8 @@ QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin
         << "from wb_py_dict where query glob :queryLike and type = 'py' " << word_input_filter
         << " group by text order by query, id limit :offset, " << (candidate_count + 1);
 
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql.str().c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
-        return result;
-    }
+    sqlite3_stmt* stmt = acquire_stmt(sql.str());
+    if (!stmt) return result;
     std::string like = query_like(to_lower(pinyin));
     sqlite3_bind_text(stmt, sqlite3_bind_parameter_index(stmt, ":queryLike"), like.c_str(), -1,
                       SQLITE_TRANSIENT);
@@ -312,7 +338,8 @@ QueryResult DictManager::get_reverse_lookup_candidates(const std::string& pinyin
         // 反查结果按 py 类型渲染，展示形码
         candidates.emplace_back(wbcode, text, CandidateType::Py);
     }
-    sqlite3_finalize(stmt);
+    // 语句缓存复用：reset 释放本次执行状态，保留已编译语句。
+    sqlite3_reset(stmt);
 
     bool has_next = static_cast<int>(candidates.size()) > candidate_count;
     if (has_next) candidates.pop_back();
@@ -351,11 +378,8 @@ QueryResult DictManager::get_candidates(const std::string& query, int page) {
     bool dyn = should_apply_dynamic_frequency(query);
 
     if (!db_) return result;
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, statement_sql(!dyn).c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
-        return result;
-    }
+    sqlite3_stmt* stmt = acquire_stmt(statement_sql(!dyn));
+    if (!stmt) return result;
     sqlite3_bind_text(stmt, sqlite3_bind_parameter_index(stmt, ":queryLike"), like.c_str(), -1,
                       SQLITE_TRANSIENT);
     if (!dyn) {
@@ -372,7 +396,8 @@ QueryResult DictManager::get_candidates(const std::string& query, int page) {
         candidate_type_from_string(type_str, type);
         candidates.emplace_back(code, text, type);
     }
-    sqlite3_finalize(stmt);
+    // 语句缓存复用：查完 reset 释放本次执行状态，但保留已编译语句供下次按键复用。
+    sqlite3_reset(stmt);
 
     int count = config_.candidate_count;
     bool has_next;
