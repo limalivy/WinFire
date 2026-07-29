@@ -153,6 +153,12 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyApp
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppId}_is1"; \
   ValueType: string; ValueName: "DisplayIcon"; ValueData: "{app}\fire_config.exe"; Flags: uninsdeletevalue
 
+; 用户数据目录绝对路径（Fix B）：TIP DLL 加载到 SearchHost.exe 等 SYSTEM 进程时，
+; CSIDL_APPDATA 会指向系统目录；通过注册表固化用户 AppData 绝对路径来解决。
+Root: HKLM; Subkey: "Software\WinFire"; ValueType: string; \
+  ValueName: "UserDataDir"; ValueData: "{userappdata}\WinFire"; \
+  Flags: uninsdeletekey
+
 ; ----------------------------------------------------------------------------
 ; 卸载完成后询问是否删除用户数据（config / 词库 / 统计）
 ; ----------------------------------------------------------------------------
@@ -170,6 +176,36 @@ const
 // lpNewFileName 传 '' 表示删除 lpExistingFileName。
 function MoveFileExW(lpExistingFileName, lpNewFileName: String; dwFlags: DWORD): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall';
+
+// 清理 PendingFileRenameOperations 中 WinFire 的残留条目。
+// DeleteOrDeferDll 在 DLL 被占用时会写入 MoveFileEx 重启删除指令，
+// 若重启后文件已被其他途径删除，PFR 条目会变成永不清除的幽灵记录，
+// 导致 Inno Setup 拒绝安装（"the installation/removal of a previous
+// program was not completed"）。
+procedure CleanWinFirePendingOps();
+var
+  psPath, psContent, psArgs: String;
+  ResultCode: Integer;
+begin
+  psPath := ExpandConstant('{tmp}\_wf_pfr_cleanup.ps1');
+  psContent :=
+    '$k = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"' + #13#10 +
+    '$v = (Get-ItemProperty $k -EA SilentlyContinue).PendingFileRenameOperations' + #13#10 +
+    'if (-not $v) { exit 0 }' + #13#10 +
+    '$n = @(); $s = 0' + #13#10 +
+    'foreach ($e in $v) {' + #13#10 +
+    '  if ($e -match "WinFire") { $s = 1; continue }' + #13#10 +
+    '  if ($s) { $s = 0; continue }' + #13#10 +
+    '  $n += $e' + #13#10 +
+    '}' + #13#10 +
+    'if ($n.Count -ne $v.Count) {' + #13#10 +
+    '  Set-ItemProperty $k -Name PendingFileRenameOperations -Value $n' + #13#10 +
+    '}';
+  SaveStringToFile(psPath, psContent, False);
+  psArgs := '-NoProfile -ExecutionPolicy Bypass -File "' + psPath + '"';
+  Exec('powershell.exe', psArgs, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  DeleteFile(psPath);
+end;
 
 // 尝试删除一个 DLL；占用无法删除时改为标记「重启后删除」，不阻塞流程。
 procedure DeleteOrDeferDll(const DllPath: String);
@@ -214,14 +250,29 @@ begin
   end;
 end;
 
+function InitializeSetup(): Boolean;
+begin
+  // 安装前先清理上次卸载残留的 PendingFileRenameOperations 条目，
+  // 避免 Inno Setup 误判为"上一次安装/卸载未完成"而拒绝安装。
+  CleanWinFirePendingOps();
+  Result := True;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     CleanupOldTsfDlls();
+    // DeleteOrDeferDll 可能又写入了新的 PFR 条目（旧 DLL 仍被占用），
+    // 再次清理确保不留残余。
+    CleanWinFirePendingOps();
+  end;
 end;
 
 function InitializeUninstall(): Boolean;
 begin
+  // 卸载前清理残留的 PFR 条目，保证卸载流程不被残留状态阻塞
+  CleanWinFirePendingOps();
   Result := True;
 end;
 
@@ -250,6 +301,8 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
+    // 卸载末尾清理 PFR 残留（卸载过程中 DeleteOrDeferDll 可能又写入了条目）
+    CleanWinFirePendingOps();
     userDataDir := ExpandConstant('{userappdata}\WinFire');
     if DirExists(userDataDir) then
     begin

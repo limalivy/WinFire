@@ -48,7 +48,12 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
     if (pRange) {
         HRESULT hr = pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
         FIRE_LOG_HR(hr, L"SetText");
-        // TODO: 用 ITfProperty(GUID_PROP_ATTRIBUTE) + GUID_FireDisplayAttributeInput 设置下划线高亮
+        // 重新锚定 range 使其覆盖完整的新文本。
+        // 部分 TSF 文本 store（如 Explorer 搜索框）在 SetText 后不会自动
+        // 扩展 range 长度，导致后续 Collapse / SetSelection 定在错误位置。
+        pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
+        LONG moved = 0;
+        pRange->ShiftEnd(session_.editCookie, (LONG)text.size(), &moved, nullptr);
         // 更新选区到组字区末尾
         TF_SELECTION sel;
         sel.range = pRange;
@@ -68,11 +73,26 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
     ITfRange* pRange = nullptr;
     if (composition_ && SUCCEEDED(composition_->GetRange(&pRange)) && pRange) {
         pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
-        pRange->Collapse(session_.editCookie, TF_ANCHOR_END);
+        // 重新锚定 range 覆盖完整文本（同 SetCompositionText 的说明）
+        pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
+        LONG moved = 0;
+        pRange->ShiftEnd(session_.editCookie, (LONG)text.size(), &moved, nullptr);
+        // 在 EndComposition 前克隆光标位置。Explorer 搜索框等控件在
+        // EndComposition 后不会自动将光标移到组字文本末尾，必须显式 SetSelection。
+        ITfRange* pCaret = nullptr;
+        pRange->Clone(&pCaret);
+        pCaret->Collapse(session_.editCookie, TF_ANCHOR_END);
         pRange->Release();
         composition_->EndComposition(session_.editCookie);
         composition_->Release();
         composition_ = nullptr;
+        // 显式定位光标到上屏文本末尾
+        TF_SELECTION sel;
+        sel.range = pCaret;
+        sel.style.ase = TF_AE_NONE;
+        sel.style.fInterimChar = FALSE;
+        session_.pContext->SetSelection(session_.editCookie, 1, &sel);
+        pCaret->Release();
         FIRE_LOG(L"[WinFire] EndCompositionAndCommit: composition ended OK\n");
     } else if (!text.empty()) {
         // 无组字：直接在选区插入
@@ -82,7 +102,16 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
             ITfRange* r = nullptr;
             pInsert->InsertTextAtSelection(session_.editCookie, 0, text.c_str(),
                                            (LONG)text.size(), &r);
-            if (r) r->Release();
+            if (r) {
+                // 显式定位光标到插入文本末尾（同上原因）
+                r->Collapse(session_.editCookie, TF_ANCHOR_END);
+                TF_SELECTION sel2;
+                sel2.range = r;
+                sel2.style.ase = TF_AE_NONE;
+                sel2.style.fInterimChar = FALSE;
+                session_.pContext->SetSelection(session_.editCookie, 1, &sel2);
+                r->Release();
+            }
             pInsert->Release();
             FIRE_LOG(L"[WinFire] EndCompositionAndCommit: InsertTextAtSelection (no composition)\n");
         }

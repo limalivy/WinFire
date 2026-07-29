@@ -37,8 +37,18 @@ if ($Dlls.Count -gt 0) {
     Write-Host "  [SKIP] no fire_tsf DLL found" -ForegroundColor DarkGray
 }
 
-# 2. Remove program files
-Write-Host "[2/3] Removing program files..." -ForegroundColor Yellow
+# 2. Remove registry entries
+Write-Host "[2/4] Removing registry entries..." -ForegroundColor Yellow
+$regPath = "HKLM:\Software\WinFire"
+if (Test-Path $regPath) {
+    Remove-Item -Path $regPath -Recurse -Force
+    Write-Host "  [OK] Removed HKLM\Software\WinFire" -ForegroundColor Green
+} else {
+    Write-Host "  [SKIP] Registry key not found" -ForegroundColor DarkGray
+}
+
+# 3. Remove program files
+Write-Host "[3/4] Removing program files..." -ForegroundColor Yellow
 if (Test-Path $InstallDir) {
     # 先处理可能仍被宿主进程占用的 DLL：删不掉则标记重启后删除，避免整体删除失败。
     $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
@@ -61,8 +71,8 @@ if (Test-Path $InstallDir) {
     Write-Host "  [SKIP] Directory not found" -ForegroundColor DarkGray
 }
 
-# 3. User data
-Write-Host "[3/3] User data..." -ForegroundColor Yellow
+# 4. User data
+Write-Host "[4/4] User data..." -ForegroundColor Yellow
 $ConfigDir = "$env:APPDATA\WinFire"
 if (Test-Path $ConfigDir) {
     $answer = Read-Host "  Keep user data at $ConfigDir? [Y/n]"

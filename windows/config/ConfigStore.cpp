@@ -13,9 +13,31 @@
 namespace firecfg {
 
 std::wstring GetConfigDir() {
+    // 优先读取安装器写入的注册表绝对路径（Fix B）。
+    // TIP 可能被加载到 SearchHost.exe 等 SYSTEM/AppContainer 进程中，此时
+    // CSIDL_APPDATA 指向系统目录而非用户目录，注册表固化路径是唯一可靠来源。
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\WinFire", 0,
+                      KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+        wchar_t value[1024] = {0};
+        DWORD size = sizeof(value);
+        DWORD type = 0;
+        if (RegQueryValueExW(hKey, L"UserDataDir", nullptr, &type,
+                             (BYTE*)value, &size) == ERROR_SUCCESS &&
+            type == REG_SZ && value[0] != 0) {
+            RegCloseKey(hKey);
+            DWORD attr = GetFileAttributesW(value);
+            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+                return std::wstring(value);
+            }
+        } else {
+            RegCloseKey(hKey);
+        }
+    }
+
+    // 回退：CSIDL_APPDATA（适用于用户进程）
     wchar_t appdata[MAX_PATH] = {0};
     if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)) || appdata[0] == 0) {
-        // 回退到当前目录，避免拼出以空字符串开头的非法路径。
         return L".\\WinFire";
     }
     std::wstring dir = std::wstring(appdata) + L"\\WinFire";

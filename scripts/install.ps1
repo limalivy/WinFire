@@ -37,6 +37,27 @@ Write-Host "  WinFire IME Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# ---- 0. Clean stale PendingFileRenameOperations entries ----
+Write-Host "[0/5] Cleaning stale pending file operations..." -ForegroundColor Yellow
+$pfrKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+$pfrValue = (Get-ItemProperty $pfrKey -EA SilentlyContinue).PendingFileRenameOperations
+if ($pfrValue) {
+    $newValue = @(); $skip = $false
+    foreach ($entry in $pfrValue) {
+        if ($entry -match "WinFire") { $skip = $true; continue }
+        if ($skip) { $skip = $false; continue }
+        $newValue += $entry
+    }
+    if ($newValue.Count -ne $pfrValue.Count) {
+        Set-ItemProperty $pfrKey -Name PendingFileRenameOperations -Value $newValue
+        Write-Host "  [OK] Removed $($pfrValue.Count - $newValue.Count) stale entry(ies)" -ForegroundColor Green
+    } else {
+        Write-Host "  [SKIP] No WinFire entries found" -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host "  [SKIP] PFR empty" -ForegroundColor DarkGray
+}
+
 # ---- 1. Check build artifacts ----
 Write-Host "[1/5] Checking build artifacts..." -ForegroundColor Yellow
 
@@ -103,6 +124,13 @@ if (-not (Test-Path $ConfigFile)) {
     Write-Host "  [SKIP] config.json already exists" -ForegroundColor DarkGray
 }
 Write-Host ("  [OK]   " + $ConfigDir) -ForegroundColor Green
+
+# 将用户数据目录的绝对路径写入注册表（Fix B）。
+# TIP DLL 可能被加载到 SearchHost.exe 等 SYSTEM/AppContainer 进程中，
+# 此时 CSIDL_APPDATA 指向系统目录；注册表固化路径是唯一可靠的定位方式。
+$regPath = "HKLM:\Software\WinFire"
+New-Item -Path $regPath -Force | Out-Null
+New-ItemProperty -Path $regPath -Name "UserDataDir" -Value $ConfigDir -PropertyType String -Force
 
 # ---- 4. Create dictionary database ----
 Write-Host "[4/5] Creating dictionary..." -ForegroundColor Yellow

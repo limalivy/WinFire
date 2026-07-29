@@ -33,6 +33,7 @@ public:
 
     void reinit();  // 重新打开数据库
     void close();
+    bool is_open() const { return db_ != nullptr; }
 
     // 对应 getCandidates(query:page:)
     QueryResult get_candidates(const std::string& query, int page = 1);

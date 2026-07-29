@@ -102,6 +102,75 @@ static void GuidToString(REFGUID guid, wchar_t* out /*[40]*/) {
     StringFromGUID2(guid, out, 40);
 }
 
+// 检查 CLSID 是否匹配 WinFire 基 GUID 模式。
+// CLSID 最后 3 字节由版本号派生，前 13 字节为哨兵值，用于识别所有版本的 WinFire。
+static bool IsWinFireBaseClsid(REFCLSID clsid) {
+    return clsid.Data1 == 0x8e9f0b21 &&
+           clsid.Data2 == 0x3c4d &&
+           clsid.Data3 == 0x4e5a &&
+           clsid.Data4[0] == 0x9b &&
+           clsid.Data4[1] == 0x7c &&
+           clsid.Data4[2] == 0x1f &&
+           clsid.Data4[3] == 0x2a &&
+           clsid.Data4[4] == 0x3b;
+}
+
+static bool IsWinFireBaseProfileGuid(REFGUID guid) {
+    return guid.Data1 == 0xa1b2c3d4 &&
+           guid.Data2 == 0xe5f6 &&
+           guid.Data3 == 0x4a7b &&
+           guid.Data4[0] == 0x8c &&
+           guid.Data4[1] == 0x9d &&
+           guid.Data4[2] == 0x0e &&
+           guid.Data4[3] == 0x1f &&
+           guid.Data4[4] == 0x2a;
+}
+
+static bool IsEqualGuid(REFGUID a, REFGUID b) {
+    return memcmp(&a, &b, sizeof(GUID)) == 0;
+}
+
+// 删除指定 CLSID 的 COM 注册表树（HKCR\CLSID\{...}）
+static void UnregisterServerKeyFor(REFCLSID clsid) {
+    wchar_t s[40];
+    GuidToString(clsid, s);
+    std::wstring key = std::wstring(L"CLSID\\") + s;
+    RegDeleteTreeW(HKEY_CLASSES_ROOT, key.c_str());
+}
+
+// 枚举 zh-CN 下所有 TSF Profile，清理匹配 WinFire 基 GUID 但不是当前版本的残留注册。
+// 解决旧版 DLL 文件已被删除导致 install.ps1/winfire.iss 的基于文件名的清理失效的问题。
+static void CleanupStaleRegistrations() {
+    CComPtr<ITfInputProcessorProfiles> profiles;
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                                  CLSCTX_INPROC_SERVER,
+                                  IID_ITfInputProcessorProfiles, (void**)&profiles);
+    if (FAILED(hr)) return;
+
+    CComPtr<IEnumTfLanguageProfiles> pEnum;
+    hr = profiles->EnumLanguageProfiles(FIRE_LANGID, &pEnum);
+    if (FAILED(hr)) return;
+
+    TF_LANGUAGEPROFILE lp;
+    while (pEnum->Next(1, &lp, nullptr) == S_OK) {
+        // 只处理匹配 WinFire 基 GUID 模式的 profile
+        if (!IsWinFireBaseClsid(lp.clsid) && !IsWinFireBaseProfileGuid(lp.guidProfile))
+            continue;
+
+        // 跳过当前版本（正在注册的这个）
+        if (IsEqualGuid(lp.clsid, CLSID_FireTextService) &&
+            IsEqualGuid(lp.guidProfile, GUID_FireProfile))
+            continue;
+
+        // 旧版本：移除语言 profile + 反注册 text service + 清 COM 注册表
+        profiles->RemoveLanguageProfile(lp.clsid, FIRE_LANGID, lp.guidProfile);
+        if (!IsEqualGuid(lp.clsid, CLSID_FireTextService)) {
+            profiles->Unregister(lp.clsid);
+            UnregisterServerKeyFor(lp.clsid);
+        }
+    }
+}
+
 static bool RegisterServerKey() {
     // HKCR\CLSID\{CLSID}\InprocServer32 = 本 DLL 路径
     wchar_t clsidStr[40];
@@ -142,6 +211,9 @@ static void UnregisterServerKey() {
 }
 
 STDAPI DllRegisterServer() {
+    // 先清理安装目录中可能已不存在的旧版本残留 TSF 注册（防止出现两个输入法）
+    CleanupStaleRegistrations();
+
     if (!RegisterServerKey()) return E_FAIL;
 
     // 注册 TIP + 语言 Profile
@@ -169,7 +241,8 @@ STDAPI DllRegisterServer() {
 
     const GUID categories[] = {
         GUID_TFCAT_TIP_KEYBOARD,
-        GUID_TFCAT_TIPCAP_UIELEMENTENABLED,   // 自绘 UI（候选窗）
+        GUID_TFCAT_TIPCAP_UIELEMENTENABLED,       // 自绘 UI（候选窗）
+        GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,       // 沉浸式/UWP 应用支持
         GUID_TFCAT_TIPCAP_SECUREMODE,
         GUID_TFCAT_TIPCAP_COMLESS,
     };
@@ -191,6 +264,7 @@ STDAPI DllUnregisterServer() {
         const GUID categories[] = {
             GUID_TFCAT_TIP_KEYBOARD,
             GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+            GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
             GUID_TFCAT_TIPCAP_SECUREMODE,
             GUID_TFCAT_TIPCAP_COMLESS,
         };

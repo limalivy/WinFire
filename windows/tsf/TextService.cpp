@@ -129,16 +129,14 @@ void CFireTextService::LoadConfigFromDisk() {
     // 读取 %APPDATA%\WinFire\config.json 的全量配置（不存在则用默认值）
     firecfg::ConfigStore::Load(config_);
 
-    // 词库与统计库路径（若配置未指定则用默认目录）
-    wchar_t appdata[MAX_PATH] = {0};
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
-        std::wstring dir = std::wstring(appdata) + L"\\WinFire";
-        if (config_.db_path.empty()) {
-            config_.db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\wb_py_dict.sqlite");
-        }
-        if (config_.stats_db_path.empty()) {
-            config_.stats_db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\statistics.sqlite");
-        }
+    // 词库与统计库路径（优先走注册表固化的绝对路径，确保 SearchHost.exe 等
+    // SYSTEM/AppContainer 进程中也能找到用户数据目录）
+    std::wstring dir = firecfg::GetConfigDir();
+    if (config_.db_path.empty()) {
+        config_.db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\wb_py_dict.sqlite");
+    }
+    if (config_.stats_db_path.empty()) {
+        config_.stats_db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\statistics.sqlite");
     }
     // 标点表：为空时用默认中文标点表
     if (config_.custom_punctuation_settings.empty()) {
@@ -385,10 +383,12 @@ STDMETHODIMP CFireTextService::OnSetFocus(BOOL fForeground) {
 
 bool CFireTextService::ShouldEat(const fire::KeyEvent& ev) const {
     if (!engine_) return false;
-    if (engine_->input_mode() == fire::InputMode::EnUS && engine_->original_string().empty()) {
-        // 英文模式且无组字：仅在需要切换/标点转换时吃键，其余透传
+    // 字典不可用时（如 SearchHost.exe 等系统进程尚未加载到正确路径），
+    // 全部透传，避免吃键但不产出文本（Fix C）。
+    if (!dict_ || !dict_->is_open()) return false;
+    // 英文模式且无组字：仅在需要切换/标点转换时吃键，其余透传
+    if (engine_->input_mode() == fire::InputMode::EnUS && engine_->original_string().empty())
         return false;
-    }
     // 组合快捷键交给宿主
     if (ev.has_command_shortcut_modifier()) return false;
     // 有组字时几乎所有可处理键都要吃
