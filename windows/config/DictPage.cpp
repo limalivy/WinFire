@@ -1,34 +1,101 @@
 //
-//  DictPage.cpp — 词库管理页（纯 Win32）：选择码表、调用 tablebuilder 生成 sqlite、编辑用户词库
+//  DictPage.cpp — 词库管理页（纯 Win32）：从 tables 目录下拉选码表、生成 sqlite、编辑用户词库
 //
 #include "ConfigApp.h"
 #include "DictPage.h"
 #include "ConfigStore.h"
 
 #include <vector>
+#include <algorithm>
+#include <string>
 
 CDictPage::CDictPage() {
     m_wbTablePath = firecfg::Utf8ToWide(g_config.wb_table_path);
     m_pyTablePath = firecfg::Utf8ToWide(g_config.py_table_path);
 }
 
-void CDictPage::OnInitDialog() {
-    firecfg::SetText(hwnd, IDC_EDIT_WB_TABLE, m_wbTablePath);
-    firecfg::SetText(hwnd, IDC_EDIT_PY_TABLE, m_pyTablePath);
+// 扫描 tables 目录下所有 .txt 文件，返回文件名列表（不含路径，按字母序）。
+// 目录不存在时返回空列表。
+std::vector<std::wstring> CDictPage::ScanTablesDir() {
+    std::vector<std::wstring> files;
+    std::wstring dir = firecfg::GetTablesDir();
+    if (dir.empty()) return files;
+
+    std::wstring pattern = dir + L"\\*.txt";
+    WIN32_FIND_DATAW fd = {0};
+    HANDLE h = FindFirstFileW(pattern.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return files;  // 目录不存在或无 txt
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            files.emplace_back(fd.cFileName);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+
+    std::sort(files.begin(), files.end());  // 字母序，保证下拉顺序稳定
+    return files;
 }
 
-// 选择 txt 码表文件（GetOpenFileNameW 替代 CFileDialog）
-static std::wstring BrowseTxt(HWND hwndOwner) {
-    wchar_t szFile[MAX_PATH] = {0};
-    OPENFILENAMEW ofn = {0};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = hwndOwner;
-    ofn.lpstrFilter = L"码表文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0\0";
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_PATHMUSTEXIST;
-    if (!GetOpenFileNameW(&ofn)) return std::wstring();
-    return std::wstring(szFile);
+// 从完整路径提取文件名（含扩展名）
+static std::wstring Basename(const std::wstring& path) {
+    size_t p = path.find_last_of(L"\\/");
+    return (p == std::wstring::npos) ? path : path.substr(p + 1);
+}
+
+// 填充下拉并尝试匹配 savedPath 对应文件名。
+// - 目录无 txt：下拉为空，状态栏提示
+// - savedPath 对应文件不在列表中（被删或路径不在 tables 下）：下拉选第一项并提示原选丢失
+// - 正常匹配：选中对应项
+void CDictPage::PopulateCombo(int comboId, const std::wstring& savedPath, const wchar_t* label) {
+    auto files = ScanTablesDir();
+    firecfg::CbReset(hwnd, comboId);
+
+    if (files.empty()) {
+        // tables 目录丢失或无码表：状态栏提示，构建按钮由 OnCommand 再校验
+        std::wstring msg = std::wstring(label) + L"：未找到 tables 目录或目录下无码表文件";
+        firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS, msg.c_str());
+        return;
+    }
+
+    // 填充下拉
+    for (const auto& f : files) firecfg::CbAdd(hwnd, comboId, f.c_str());
+
+    // 匹配已保存路径对应的文件名
+    std::wstring savedName = Basename(savedPath);
+    int sel = -1;
+    if (!savedName.empty()) {
+        for (int i = 0; i < (int)files.size(); ++i) {
+            if (_wcsicmp(files[i].c_str(), savedName.c_str()) == 0) { sel = i; break; }
+        }
+    }
+
+    if (sel >= 0) {
+        firecfg::CbSetSel(hwnd, comboId, sel);
+    } else if (!savedPath.empty()) {
+        // 原选码表已丢失（文件被删或 tables 目录被换）：回退到第一项并提示
+        firecfg::CbSetSel(hwnd, comboId, 0);
+        std::wstring msg = std::wstring(label) + L"：原选码表 " + savedName +
+                           L" 已丢失，已回退为 " + files[0] + L"，请确认或重新选择";
+        firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS, msg.c_str());
+    } else {
+        // 首次使用（无保存路径）：默认不选，让用户主动选
+        firecfg::CbSetSel(hwnd, comboId, -1);
+    }
+}
+
+// 取下拉选中文件名，拼成 tables 目录下的完整路径；未选返回空
+std::wstring CDictPage::GetComboFullPath(int comboId) {
+    int sel = firecfg::CbGetSel(hwnd, comboId);
+    if (sel < 0) return std::wstring();
+    wchar_t buf[MAX_PATH] = {0};
+    GetDlgItemTextW(hwnd, comboId, buf, MAX_PATH);
+    if (buf[0] == 0) return std::wstring();
+    return firecfg::GetTablesDir() + L"\\" + std::wstring(buf);
+}
+
+void CDictPage::OnInitDialog() {
+    PopulateCombo(IDC_CMB_WB_TABLE, m_wbTablePath, L"五笔码表");
+    PopulateCombo(IDC_CMB_PY_TABLE, m_pyTablePath, L"拼音码表");
 }
 
 void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
@@ -36,16 +103,10 @@ void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
     int id = LOWORD(wParam);
     if (code != BN_CLICKED) return;
 
-    if (id == IDC_BTN_BROWSE_WB) {
-        std::wstring p = BrowseTxt(hwnd);
-        if (!p.empty()) { m_wbTablePath = p; firecfg::SetText(hwnd, IDC_EDIT_WB_TABLE, p); }
-    } else if (id == IDC_BTN_BROWSE_PY) {
-        std::wstring p = BrowseTxt(hwnd);
-        if (!p.empty()) { m_pyTablePath = p; firecfg::SetText(hwnd, IDC_EDIT_PY_TABLE, p); }
-    } else if (id == IDC_BTN_BUILD_DICT) {
-        // 读取最新路径
-        m_wbTablePath = firecfg::GetText(hwnd, IDC_EDIT_WB_TABLE);
-        m_pyTablePath = firecfg::GetText(hwnd, IDC_EDIT_PY_TABLE);
+    if (id == IDC_BTN_BUILD_DICT) {
+        // 从下拉取最新路径
+        m_wbTablePath = GetComboFullPath(IDC_CMB_WB_TABLE);
+        m_pyTablePath = GetComboFullPath(IDC_CMB_PY_TABLE);
 
         auto FileExists = [](const std::wstring& path) -> bool {
             if (path.empty()) return false;
@@ -55,9 +116,9 @@ void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
 
         bool hasWb = FileExists(m_wbTablePath);
         bool hasPy = FileExists(m_pyTablePath);
-        // 构建前校验码表路径存在，避免把无效路径传给 tablebuilder。
         if (!hasWb && !hasPy) {
-            firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS, L"请先选择存在的五笔或拼音码表文件");
+            firecfg::SetText(hwnd, IDC_STATIC_BUILD_STATUS,
+                L"请先在下拉中选择存在的五笔或拼音码表（tables 目录下无可用文件）");
             return;
         }
 

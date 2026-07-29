@@ -25,6 +25,15 @@ std::wstring GetConfigDir() {
 std::wstring GetConfigJsonPath() { return GetConfigDir() + L"\\config.json"; }
 std::wstring GetUserDictPath()   { return GetConfigDir() + L"\\user-dict.txt"; }
 std::wstring GetDictDbPath()     { return GetConfigDir() + L"\\wb_py_dict.sqlite"; }
+std::wstring GetTablesDir() {
+    // 程序 EXE 同目录下的 tables 子目录（安装版即 %ProgramFiles%\WinFire\tables）
+    wchar_t exe[MAX_PATH] = {0};
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return std::wstring();
+    std::wstring d(exe);
+    size_t p = d.find_last_of(L"\\/");
+    if (p == std::wstring::npos) return std::wstring();
+    return d.substr(0, p) + L"\\tables";
+}
 
 // ---- 极简 JSON 工具（够用即可，字段固定）----
 namespace {
@@ -232,6 +241,24 @@ bool ConfigStore::Load(fire::Config& c) {
     // 自定义标点映射（仅在 punctuationMode=Custom 时使用）
     c.custom_punctuation_settings.clear();
     ParseCustomPunctuation(json, c.custom_punctuation_settings);
+
+    // 码表路径（词库管理页选中的五笔/拼音码表完整路径）
+    // FindRaw 不做 JSON 反转义，路径含 \ 会被 EscapeJson 写成 \\ ，这里手动还原。
+    {
+        std::string v;
+        if (FindRaw(json, "wbTablePath", v)) {
+            for (size_t i = 0; i + 1 < v.size(); ++i) {
+                if (v[i] == '\\' && v[i + 1] == '\\') { v.erase(i, 1); }
+            }
+            c.wb_table_path = v;
+        }
+        if (FindRaw(json, "pyTablePath", v)) {
+            for (size_t i = 0; i + 1 < v.size(); ++i) {
+                if (v[i] == '\\' && v[i + 1] == '\\') { v.erase(i, 1); }
+            }
+            c.py_table_path = v;
+        }
+    }
     return true;
 }
 
@@ -275,7 +302,9 @@ bool ConfigStore::Save(const fire::Config& c) {
         first = false;
         o << "{\"k\": \"" << EscapeJson(kv.first) << "\", \"v\": \"" << EscapeJson(kv.second) << "\"}";
     }
-    o << "]\n";
+    o << "],\n";
+    o << "  \"wbTablePath\": \"" << EscapeJson(c.wb_table_path) << "\",\n";
+    o << "  \"pyTablePath\": \"" << EscapeJson(c.py_table_path) << "\"\n";
     o << "}\n";
     return WriteFileUtf8(GetConfigJsonPath(), o.str());
 }

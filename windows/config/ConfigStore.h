@@ -16,6 +16,8 @@ std::wstring GetConfigDir();
 std::wstring GetConfigJsonPath();
 std::wstring GetUserDictPath();
 std::wstring GetDictDbPath();
+// 返回程序同目录下的 tables 子目录（码表存放位置，不创建）
+std::wstring GetTablesDir();
 
 class ConfigStore {
 public:

@@ -96,11 +96,9 @@ CAPTION "词库管理"
 FONT 9, "MS Shell Dlg"
 BEGIN
     LTEXT   "五笔码表:",     IDC_STATIC,            12, 14, 50, 10
-    EDITTEXT                 IDC_EDIT_WB_TABLE,     66, 12, 130, 14, ES_AUTOHSCROLL
-    PUSHBUTTON "浏览...",    IDC_BTN_BROWSE_WB,     200, 11, 45, 16
+    COMBOBOX                 IDC_CMB_WB_TABLE,      66, 12, 175, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT   "拼音码表:",     IDC_STATIC,            12, 38, 50, 10
-    EDITTEXT                 IDC_EDIT_PY_TABLE,     66, 36, 130, 14, ES_AUTOHSCROLL
-    PUSHBUTTON "浏览...",    IDC_BTN_BROWSE_PY,     200, 35, 45, 16
+    COMBOBOX                 IDC_CMB_PY_TABLE,      66, 36, 175, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON "生成词库",   IDC_BTN_BUILD_DICT,    66, 64, 80, 20
     PUSHBUTTON "编辑用户词库",IDC_BTN_EDIT_USERDICT, 150, 64, 90, 20
     LTEXT   "",              IDC_STATIC_BUILD_STATUS,12, 96, 230, 12
