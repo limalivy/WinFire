@@ -28,6 +28,8 @@ $TsfDllSrc    = "$RepoRoot\windows\tsf\x64\Debug\fire_tsf.dll"
 $TsfDllDst    = "$InstallDir\fire_tsf_DEV.dll"
 $ConfigExeSrc = "$RepoRoot\windows\config\x64\Debug\fire_config.exe"
 $ConfigExeDst = "$InstallDir\fire_config.exe"
+$DictdExeSrc  = "$RepoRoot\windows\dictd\x64\Debug\fire_dictd.exe"
+$DictdExeDst  = "$InstallDir\fire_dictd.exe"
 # tablebuilder.exe: CMake builds it under build\Debug\ or build\
 if (Test-Path "$RepoRoot\build\Debug\tablebuilder.exe") {
     $TablebuilderSrc = "$RepoRoot\build\Debug\tablebuilder.exe"
@@ -71,6 +73,10 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Config build failed" }
     Write-Host "  [OK] fire_config.exe (Debug)" -ForegroundColor Green
 
+    & $msbuild "$RepoRoot\windows\dictd\fire_dictd.vcxproj" /p:Configuration=Debug /p:Platform=x64 /t:Build /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "Dictd build failed" }
+    Write-Host "  [OK] fire_dictd.exe (Debug)" -ForegroundColor Green
+
     $cmakeBuildDir = "$RepoRoot\build"
     if (-not (Test-Path "$cmakeBuildDir\CMakeCache.txt")) {
         & cmake -S $RepoRoot -B $cmakeBuildDir -DBUILD_CORE=ON -DBUILD_TESTS=OFF -DBUILD_TABLEBUILDER=ON 2>&1 | Out-Null
@@ -91,6 +97,8 @@ if (-not $SkipBuild) {
 
 # ---- 2. Kill ctfmon to release DLL file locks ----
 Step "Releasing TSF host locks..."
+# 结束常驻的后台查字进程，释放 fire_dictd.exe 映像占用以便覆盖新构建。
+& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
 $ctfmonKilled = $false
 Get-Process -Name "ctfmon" -ErrorAction SilentlyContinue | ForEach-Object {
     Stop-Process -Id $_.Id -Force
@@ -152,7 +160,13 @@ Get-ChildItem -Path $InstallDir -Filter "fire_tsf_0.*.dll" -ErrorAction Silently
 
 Copy-Item $ConfigExeSrc $ConfigExeDst -Force -ErrorAction SilentlyContinue
 Copy-Item $TablebuilderSrc $TablebuilderDst -Force
-Write-Host "  [OK] fire_config.exe + tablebuilder.exe" -ForegroundColor Green
+Copy-Item $DictdExeSrc $DictdExeDst -Force -ErrorAction SilentlyContinue
+Write-Host "  [OK] fire_config.exe + tablebuilder.exe + fire_dictd.exe" -ForegroundColor Green
+
+# 授予 AppContainer（ALL APPLICATION PACKAGES，SID S-1-15-2-1）读取+执行权限，
+# 使 SearchHost.exe / UWP 等沙箱进程能加载 DLL 并读 tables（与安装包一致）。
+& icacls "$InstallDir" /grant "*S-1-15-2-1:(OI)(CI)(RX)" /T /C /Q 2>&1 | Out-Null
+Write-Host "  [OK] AppContainer ACL granted" -ForegroundColor Green
 
 # ---- 4. Init user data ----
 Step "Checking user data..."
@@ -229,6 +243,10 @@ if ($LASTEXITCODE -eq 0) {
     & rundll32 "$TsfDllDst",DllRegisterServer 2>&1 | Out-Null
     Write-Host "  [OK] rundll32 fallback done" -ForegroundColor Green
 }
+
+# 拉起后台查字进程（正常 IL），供沙箱进程经 IPC 查库。
+Start-Process -FilePath $DictdExeDst -WindowStyle Hidden
+Write-Host "  [OK] fire_dictd.exe backend started" -ForegroundColor Green
 
 # ---- 6. Wait for ctfmon to restart ----
 Step "Waiting for ctfmon restart..."

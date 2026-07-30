@@ -39,7 +39,7 @@ std::string to_upper(const std::string& s) {
 }
 }  // namespace
 
-InputEngine::InputEngine(Config& config, DictManager& dict, InputClient& client)
+InputEngine::InputEngine(Config& config, IDictService& dict, InputClient& client)
     : config_(config), dict_(dict), client_(client), punctuation_(config) {}
 
 // ---- 对应 Fire.getCandidates ----
@@ -49,9 +49,9 @@ QueryResult InputEngine::get_candidates(const std::string& origin, int page) {
     // ` + 拼音反查形码
     if (config_.z_key_query && !origin.empty() && origin[0] == '`') {
         std::string pinyin = origin.substr(1);
-        return dict_.get_reverse_lookup_candidates(pinyin, page);
+        return dict_.GetReverseLookup(pinyin, page);
     }
-    return dict_.get_candidates(origin, page);
+    return dict_.GetCandidates(origin, page);
 }
 
 // ---- 中英文切换，对应 Fire.toggleInputMode ----
@@ -164,7 +164,7 @@ std::string InputEngine::display_original_string() const {
 
 void InputEngine::remember_dynamic_frequency_if_needed(const Candidate& candidate) {
     if (is_reverse_lookup_mode() || candidate.text.empty()) return;
-    dict_.remember_dynamic_frequency(original_string_, candidate);
+    dict_.RememberDynamicFrequency(original_string_, candidate);
 }
 
 std::optional<Candidate> InputEngine::first_valid_candidate(const std::string& code) {
@@ -392,7 +392,7 @@ std::optional<bool> InputEngine::hotkey_handler(const KeyEvent& e) {
     if (!e.is_digit(num)) return std::nullopt;
     if (e.control && !e.shift && !e.option && !e.command && num > 0 &&
         num <= static_cast<int>(candidates_.size())) {
-        dict_.set_candidate_to_first(original_string_, candidates_[num - 1]);
+        dict_.SetCandidateToFirst(original_string_, candidates_[num - 1]);
         cur_page_ = 1;
         refresh_candidates_window();
         return true;

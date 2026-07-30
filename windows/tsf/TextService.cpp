@@ -3,6 +3,7 @@
 //
 #include "TextService.h"
 #include "DebugLog.h"
+#include "DictIpcProxy.h"
 #include "LangBarButton.h"
 #include "../candidate_window/CandidateWindow.h"
 #include "../config/ConfigStore.h"
@@ -153,32 +154,43 @@ void CFireTextService::InitEngine() {
     LoadConfigFromDisk();
     FIRE_LOG(L"[WinFire] InitEngine: config loaded\n");
 
-    FIRE_LOG(L"[WinFire] InitEngine: creating DictManager\n");
-    dict_ = std::make_unique<fire::DictManager>(config_);
-    FIRE_LOG(L"[WinFire] InitEngine: DictManager created OK\n");
+    // 查字/统计服务注入策略（详见 docs/dict-ipc-design.md §3.2）：
+    //   默认：DictIpcProxy —— 把查库/统计转发给正常 IL 的 fire_dictd.exe，
+    //         使 SearchHost.exe/UWP 等 AppContainer 沙箱进程也能出候选。
+    //   回退：连不上后台（首启失败/被杀）时用 DictLocalImpl 本进程直接查库，
+    //         等价历史行为（非沙箱进程仍可用）。
+    {
+        auto proxy = std::make_unique<DictIpcProxy>(inputClient_.bundle_id());
+        bool connected = proxy->Handshake();
+        FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake connected=%d ready=%d\n",
+                 connected ? 1 : 0, proxy->IsAvailable() ? 1 : 0);
+        if (connected) {
+            dictService_ = std::move(proxy);
+        } else {
+            FIRE_LOG(L"[WinFire] InitEngine: backend unavailable, falling back to DictLocalImpl\n");
+            auto dict = std::make_unique<fire::DictManager>(config_);
+            std::unique_ptr<fire::Statistics> stats;
+            if (config_.enable_statistics || config_.enable_hanzi_frequency_statistics) {
+                stats = std::make_unique<fire::Statistics>(config_.stats_db_path);
+            }
+            dictService_ = std::make_unique<fire::DictLocalImpl>(std::move(dict), std::move(stats));
+        }
+    }
 
     FIRE_LOG(L"[WinFire] InitEngine: creating InputEngine\n");
-    engine_ = std::make_unique<fire::InputEngine>(config_, *dict_, inputClient_);
+    engine_ = std::make_unique<fire::InputEngine>(config_, *dictService_, inputClient_);
     FIRE_LOG(L"[WinFire] InitEngine: InputEngine created OK\n");
 
     // 注入组字终止回调 sink：宿主主动结束组字时经 OnCompositionTerminated 通知本 TIP。
     inputClient_.SetCompositionSink(static_cast<ITfCompositionSink*>(this));
 
-    // 输入统计库（同步写入）。仅在开启任一统计开关时才创建。
-    if (config_.enable_statistics || config_.enable_hanzi_frequency_statistics) {
-        FIRE_LOG(L"[WinFire] InitEngine: creating Statistics, path='%hs'\n",
-                 config_.stats_db_path.c_str());
-        stats_ = std::make_unique<fire::Statistics>(config_.stats_db_path);
-        engine_->set_candidate_inserted_callback([this](const fire::CandidateInsertedInfo& info) {
-            if (stats_ && stats_->is_open()) {
-                stats_->record_candidate(info.candidate, info.app_id,
-                                         info.hanzi_frequency_parts,
-                                         config_.enable_statistics,
-                                         config_.enable_hanzi_frequency_statistics);
-            }
-        });
-        FIRE_LOG(L"[WinFire] InitEngine: Statistics created OK\n");
-    }
+    // 上屏统计回调：经 IDictService 写入（本地实现内部转调 Statistics）。
+    engine_->set_candidate_inserted_callback([this](const fire::CandidateInsertedInfo& info) {
+        dictService_->RecordCandidate(info.candidate, info.app_id,
+                                      info.hanzi_frequency_parts,
+                                      config_.enable_statistics,
+                                      config_.enable_hanzi_frequency_statistics);
+    });
 
     FIRE_LOG(L"[WinFire] InitEngine: creating CandidateWindow, g_hInst=%p\n", (void*)g_hInst);
     candWindow_ = std::make_unique<CandidateWindowController>(config_);
@@ -290,9 +302,8 @@ STDMETHODIMP CFireTextService::Deactivate() {
     }
     FIRE_LOG(L"[WinFire] Deactivate: destroying resources\n");
     if (candWindow_) candWindow_->Destroy();
-    stats_.reset();
     engine_.reset();
-    dict_.reset();
+    dictService_.reset();
     candWindow_.reset();
     threadMgr_.Release();
     clientId_ = TF_CLIENTID_NULL;
@@ -385,7 +396,7 @@ bool CFireTextService::ShouldEat(const fire::KeyEvent& ev) const {
     if (!engine_) return false;
     // 字典不可用时（如 SearchHost.exe 等系统进程尚未加载到正确路径），
     // 全部透传，避免吃键但不产出文本（Fix C）。
-    if (!dict_ || !dict_->is_open()) return false;
+    if (!dictService_ || !dictService_->IsAvailable()) return false;
     // 英文模式且无组字：仅在需要切换/标点转换时吃键，其余透传
     if (engine_->input_mode() == fire::InputMode::EnUS && engine_->original_string().empty())
         return false;

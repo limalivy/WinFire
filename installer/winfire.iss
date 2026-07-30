@@ -49,6 +49,7 @@
 ; 构建产物路径（相对于本 .iss 文件所在目录）
 #define BuildTsfDir        "..\windows\tsf\x64\Release"
 #define BuildConfigDir     "..\windows\config\x64\Release"
+#define BuildDictdDir      "..\windows\dictd\x64\Release"
 #define ResourcesDir       "..\resources"
 #define StagingDir         "staging"
 
@@ -91,6 +92,9 @@ UninstallDisplayName={#MyAppName}
 Source: "{#BuildTsfDir}\fire_tsf.dll";       DestDir: "{app}"; DestName: "{#TsfDllName}"; Flags: ignoreversion
 ; 配置工具 EXE 一般不会被长期占用；仍用 restartreplace 兜底（正被打开时延迟替换）。
 Source: "{#BuildConfigDir}\fire_config.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+; 后台查字进程 EXE（正常 IL，供 AppContainer 沙箱进程经 IPC 查库）。
+; 后台可能常驻，安装/升级前由 [Code] 先温和结束旧进程；restartreplace 兜底占用场景。
+Source: "{#BuildDictdDir}\fire_dictd.exe";   DestDir: "{app}"; Flags: ignoreversion restartreplace
 ; 预构建词库（随包分发，避免用户安装时长时间等待 tablebuilder 构建 1.3MB 码表）
 ; 安装到用户数据目录，仅当目标不存在时复制（保留用户已有词库与动态调频）
 Source: "{#StagingDir}\wb_py_dict.sqlite";   DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
@@ -115,9 +119,18 @@ Name: "{userappdata}\WinFire";  Flags: uninsneveruninstall
 ;       旧版的反注册与旧 DLL 清理在 [Code] 的 CurStepChanged(ssPostInstall) 完成。
 ; ----------------------------------------------------------------------------
 [Run]
+; 授予 ALL APPLICATION PACKAGES（AppContainer，SID S-1-15-2-1）对程序目录的
+; 读取+执行权限，使 SearchHost.exe / UWP 等沙箱进程能加载 fire_tsf.dll 并读 tables。
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /grant *S-1-15-2-1:(OI)(CI)(RX) /T /C /Q"; \
+  StatusMsg: "{cm:StatusGrantingAcl}"; Flags: runhidden
+
 ; 安装完成后静默注册 TSF（/s 静默）。DLL 为全新版本化文件名，无占用问题。
 Filename: "{win}\System32\regsvr32.exe"; Parameters: "/s ""{app}\{#TsfDllName}"""; \
   StatusMsg: "{cm:StatusRegisteringIME}"; Flags: runhidden
+
+; 安装完成后立即拉起后台查字进程（正常 IL），使沙箱进程首次输入即可出候选，
+; 无需等 DLL 端按需拉起（AppContainer 进程通常无权 CreateProcess）。
+Filename: "{app}\fire_dictd.exe"; Flags: nowait runhidden skipifsilent
 
 ; 安装完成后启动配置工具（可选，用户可在向导中勾选）
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchConfigTool}"; \
@@ -167,6 +180,7 @@ Root: HKLM; Subkey: "Software\WinFire"; ValueType: string; \
 [CustomMessages]
 ; 简体中文本地化
 StatusRegisteringIME=正在注册输入法...
+StatusGrantingAcl=正在配置沙箱访问权限...
 LaunchConfigTool=启动配置工具(&L)
 UninstallDataPrompt=是否删除用户数据（配置、词库、输入统计）？%n选择「否」将保留 %1 以便将来重装。
 
@@ -252,11 +266,26 @@ begin
   end;
 end;
 
+// 结束常驻的后台查字进程 fire_dictd.exe。
+// 后台进程为 in-process DLL 之外的独立 EXE，安装/升级/卸载前需先结束，
+// 否则其映像被占用导致 fire_dictd.exe 无法被覆盖或删除（虽有 restartreplace
+// 兜底，但主动结束可让新版立即生效、避免延迟到重启）。
+// 后台自身有空闲超时退出机制，结束后不会残留；新版安装完成会重新拉起。
+procedure KillDictd();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fire_dictd.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 function InitializeSetup(): Boolean;
 begin
   // 安装前先清理上次卸载残留的 PendingFileRenameOperations 条目，
   // 避免 Inno Setup 误判为"上一次安装/卸载未完成"而拒绝安装。
   CleanWinFirePendingOps();
+  // 结束可能常驻的旧后台查字进程，释放 fire_dictd.exe 映像占用。
+  KillDictd();
   Result := True;
 end;
 
@@ -275,6 +304,8 @@ function InitializeUninstall(): Boolean;
 begin
   // 卸载前清理残留的 PFR 条目，保证卸载流程不被残留状态阻塞
   CleanWinFirePendingOps();
+  // 结束常驻的后台查字进程，释放 fire_dictd.exe 占用以便删除。
+  KillDictd();
   Result := True;
 end;
 

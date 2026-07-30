@@ -37,8 +37,15 @@ winFire/
 │   │   ├── dict_manager.h      # 词库查询                    <- DictManager.swift
 │   │   ├── input_engine.h      # 状态机（16段handler链）      <- FireInputController.swift + Fire.swift
 │   │   ├── input_mode_cache.h  # 按应用输入模式 LRU 缓存      <- InputModeCache.swift
-│   │   └── statistics.h        # 输入统计（SQLite）           <- Utils/Statistics.swift
+│   │   ├── statistics.h        # 输入统计（SQLite）           <- Utils/Statistics.swift
+│   │   ├── dict_service.h      # 查字/统计抽象接口 IDictService（本地/IPC 两种实现）
+│   │   └── dict_local_impl.h   # IDictService 本地实现（直接持 DictManager+Statistics）
 │   └── src/                    # 对应实现
+├── ipc/                        # 查字进程分离 IPC 协议（纯 C++17，跨平台，入 CMake 可测）
+│   ├── include/fire/ipc/
+│   │   ├── wire.h              # payload 二进制读写 Writer/Reader（小端定长 + 越界检查）
+│   │   └── protocol.h          # 帧头(16B) + 各消息 encode/decode + MsgType 枚举
+│   └── src/                    # wire.cpp / protocol.cpp
 ├── tablebuilder/main.cpp       # 码表 txt -> sqlite           <- TableBuilder/main.cpp
 ├── tests/                      # 内核单元测试（极简框架 + ctest）
 │   ├── test_util.h             # 断言宏 + 测试词库 + FakeClient
@@ -47,11 +54,14 @@ winFire/
 │   ├── test_dict.cpp
 │   ├── test_engine.cpp
 │   ├── test_input_mode_cache.cpp
-│   └── test_statistics.cpp
+│   ├── test_statistics.cpp
+│   └── test_ipc_protocol.cpp   # IPC 协议编解码往返测试
 ├── windows/                    # Windows 平台层
-│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
+│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
-│   └── config/                 # 纯 Win32 配置界面（fire_config.exe，PropertySheet + GDI）
+│   ├── config/                 # 纯 Win32 配置界面（fire_config.exe，PropertySheet + GDI）
+│   ├── dictd/                  # 后台查字进程 fire_dictd.exe（命名管道 server + DictManager+Statistics）
+│   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具（IpcShared.h）
 ├── installer/                  # Inno Setup 脚本与预构建资源
 │   ├── winfire.iss             # 安装包脚本
 │   └── staging/                # 预构建词库 + 默认 config.json（随包分发）
@@ -128,6 +138,31 @@ spaceKey -> punctuation
 - 维护：清除全部 / 仅清字词频 / 导出 CSV（含 BOM，列「应用ID,词,次数」）。
 - 引擎通过 `set_candidate_inserted_callback(CandidateInsertedInfo)` 把上屏事件回灌给统计。
 
+### 4.8 查字进程分离（Dict IPC，AppContainer 适配）
+- **动机**：TSF DLL 会被加载进 SearchHost.exe / UWP 等 AppContainer 沙箱进程，沙箱无权
+  读写 `%APPDATA%` 下词库/统计库，导致「开始菜单搜索」等场景无候选。方案：把查库/统计
+  下沉到一个正常完整性级别（IL）的后台进程 `fire_dictd.exe`，DLL 端经 IPC 转发。
+- **接口抽象**：`IDictService`（`core/include/fire/dict_service.h`）纯虚接口，`InputEngine`
+  只依赖它。两种实现：
+  - `DictLocalImpl`（内核内，直接持 `DictManager`+`Statistics`）——非沙箱进程/后台不可用时回退。
+  - `DictIpcProxy`（`windows/tsf/`）——把调用编码成 IPC 请求转发给 `fire_dictd.exe`。
+- **协议**（`ipc/`，纯 C++17 入 CMake 可测）：16 字节定长帧头（magic `0x57464452`"WFDR" /
+  version u16=1 / msg_type u16 / request_id u32 / payload_len u32）+ 手写小端二进制 payload
+  （`Writer/Reader`，越界检查）。MsgType：`0x01` Hello、`0x02` QueryCandidates、`0x03`
+  ReverseLookup、`0x04` RememberFreq、`0x05` SetCandidateFirst、`0x06` PrependCandidate、
+  `0x07` GetUserCandidates、`0x08` RecordStat、`0x09` Reinit、`0xFF` Error。
+- **传输**：命名管道 `\\.\pipe\WinFire_Dict_<会话id>`（`PIPE_TYPE_MESSAGE`），SDDL
+  `D:(A;;GRGW;;;WD)(A;;GRGW;;;AC)S:(ML;;NW;;;LW)` 放开 AppContainer + 低 IL 访问。
+  server/client 均用 `FILE_FLAG_OVERLAPPED` 创建，所有读写走 overlapped + 超时。
+  查询同步（20ms 超时，超时/失败即回退空结果并标记重连）；统计/调频/Reinit 异步
+  fire-and-forget。
+- **后台生命周期**：单实例 mutex `Global\WinFire_Dictd_<会话id>`；空闲超时退出（每轮
+  30s，连续 20 轮约 10 分钟无连接自动退出）；由安装脚本/正常 IL 进程拉起（AppContainer
+  进程通常无权 CreateProcess，故不能只靠 DLL 端按需拉起）。DLL 端 `DictIpcProxy` 首次
+  连不上会尝试 `CreateProcessW` 拉起同目录 `fire_dictd.exe` 并重试（非沙箱场景兜底）。
+- **数据路径与权限**：安装时 `icacls "{app}" /grant *S-1-15-2-1:(OI)(CI)(RX) /T`（授予
+  ALL APPLICATION PACKAGES 读/执行）；后台以正常 IL 读写用户数据库，绕开沙箱写限制。
+
 ## 5. 构建与验证
 
 ### 5.1 跨平台内核（CMake，可在 macOS / Linux 验证）
@@ -142,6 +177,8 @@ cd build && ctest --output-on-failure
 
 CMake 选项（默认 ON）：`BUILD_CORE` / `BUILD_TESTS` / `BUILD_TABLEBUILDER`。
 sqlite3 从系统 SDK / homebrew 定位（`find_package(SQLite3)`，回退 `-lsqlite3`）。
+IPC 协议库（`ipc/`）随 `BUILD_CORE` 一并构建，`test_ipc_protocol.cpp` 随 ctest 验证
+（编解码往返；命名管道传输层仅 Win32，macOS 不编译）。
 
 ### 5.2 Windows 层（MSBuild，需 VS2022 + ATL + Windows SDK 10）
 
@@ -149,11 +186,14 @@ sqlite3 从系统 SDK / homebrew 定位（`find_package(SQLite3)`，回退 `-lsq
 > fire_tsf.dll 仍需 ATL（纯原生 COM）。
 
 ```powershell
-# 编译 TSF TIP DLL（fire_tsf.dll）
+# 编译 TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient + ipc/ 协议）
 MSBuild.exe windows\tsf\fire_tsf.vcxproj /p:Configuration=Release /p:Platform=x64
 
 # 编译配置工具 EXE（fire_config.exe）
 MSBuild.exe windows\config\fire_config.vcxproj /p:Configuration=Release /p:Platform=x64
+
+# 编译后台查字进程 EXE（fire_dictd.exe，命名管道 server + DictManager+Statistics）
+MSBuild.exe windows\dictd\fire_dictd.vcxproj /p:Configuration=Release /p:Platform=x64
 
 # 构建 tablebuilder.exe（生成预构建词库用）
 cmake -S . -B build -DBUILD_TABLEBUILDER=ON

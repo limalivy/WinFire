@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 微火输入法 TSF TIP（ATL 纯原生 COM）DLL 工程。需在 Windows + VS2022 中构建。 -->
+<!-- 微火输入法 后台查字进程（fire_dictd.exe）Console EXE 工程。需在 Windows + VS2022 中构建。 -->
 <Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
@@ -12,90 +12,65 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{F1RE0001-0000-0000-0000-00000000TSF1}</ProjectGuid>
-    <RootNamespace>fire_tsf</RootNamespace>
+    <ProjectGuid>{F1RE0003-0000-0000-0000-000000DICTD1}</ProjectGuid>
+    <RootNamespace>fire_dictd</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <UseOfAtl>Static</UseOfAtl>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\..\ipc\include;$(ProjectDir)..\config;$(ProjectDir)..\..\third_party\sqlite3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <!-- 静态链接 CRT（/MT）：TSF 作为 in-process DLL 加载到各种宿主进程
-           （QQ/Word/Chrome…），必须静态链接避免与宿主的 CRT 版本冲突。
-           ATL Static 模式也要求 CRT 静态链接。 -->
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
-      <SubSystem>Windows</SubSystem>
-      <ModuleDefinitionFile>fire_tsf.def</ModuleDefinitionFile>
-      <AdditionalDependencies>gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>shell32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <!-- Debug 配置：开启 FIRE_DEBUG 日志（仍用 /MT 静态链接，不依赖 Debug CRT DLL） -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
       <PreprocessorDefinitions>FIRE_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <UndefinePreprocessorDefinitions>
-      </UndefinePreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <!-- Windows 层 -->
-    <ClCompile Include="Globals.cpp" />
-    <ClCompile Include="KeyEventTranslator.cpp" />
-    <ClCompile Include="TsfInputClient.cpp" />
-    <ClCompile Include="TextService.cpp" />
-    <ClCompile Include="LangBarButton.cpp" />
-    <ClCompile Include="DictIpcProxy.cpp" />
-    <ClCompile Include="NamedPipeClient.cpp" />
+    <!-- 后台进程实现 -->
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="NamedPipeServer.cpp" />
+    <ClCompile Include="DictServer.cpp" />
+    <!-- 配置读取（复用 fire_config 的 ConfigStore） -->
     <ClCompile Include="..\config\ConfigStore.cpp" />
-    <ClCompile Include="DllMain.cpp" />
-    <ClCompile Include="..\candidate_window\CandidateWindow.cpp" />
     <!-- IPC 协议编解码 -->
     <ClCompile Include="..\..\ipc\src\wire.cpp" />
     <ClCompile Include="..\..\ipc\src\protocol.cpp" />
-    <!-- 第三方源码 -->
-    <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
-    <!-- 跨平台内核（与 TIP 一起编译进 DLL） -->
+    <!-- 跨平台内核：真正碰 SQLite 的查字/统计逻辑 -->
     <ClCompile Include="..\..\core\src\types.cpp" />
     <ClCompile Include="..\..\core\src\candidate.cpp" />
-    <ClCompile Include="..\..\core\src\key_event.cpp" />
     <ClCompile Include="..\..\core\src\punctuation.cpp" />
     <ClCompile Include="..\..\core\src\dict_manager.cpp" />
-    <ClCompile Include="..\..\core\src\dict_local_impl.cpp" />
-    <ClCompile Include="..\..\core\src\input_engine.cpp" />
     <ClCompile Include="..\..\core\src\input_mode_cache.cpp" />
     <ClCompile Include="..\..\core\src\statistics.cpp" />
     <ClCompile Include="..\..\core\src\utf8.cpp" />
+    <!-- 第三方源码 -->
+    <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Globals.h" />
-    <ClInclude Include="DebugLog.h" />
-    <ClInclude Include="KeyEventTranslator.h" />
-    <ClInclude Include="TsfInputClient.h" />
-    <ClInclude Include="TextService.h" />
-    <ClInclude Include="LangBarButton.h" />
-    <ClInclude Include="DictIpcProxy.h" />
-    <ClInclude Include="NamedPipeClient.h" />
+    <ClInclude Include="NamedPipeServer.h" />
+    <ClInclude Include="DictServer.h" />
     <ClInclude Include="..\common\IpcShared.h" />
+    <ClInclude Include="..\config\ConfigStore.h" />
   </ItemGroup>
   <!-- ===================================================================== -->
-  <!-- 版本号单一来源：从仓库根目录的 VERSION 文件（形如 0.1.0）生成 Version.h。 -->
-  <!-- VERSION 不纳入 git（本地测试可频繁递增）；缺失时回退到已跟踪的基线 -->
-  <!-- VERSION.default，保证全新 checkout / CI 仍可构建。 -->
-  <!-- 该目标在每次编译前运行，保证 Globals.h 里 include 的 FIRE_VER_* 宏始终 -->
-  <!-- 与版本文件一致；发版/测试改版本时只改 VERSION 一处（详见 AGENTS.md）。 -->
-  <!-- Version.h 为生成产物，不纳入版本控制。 -->
+  <!-- 版本号单一来源：从仓库根目录的 VERSION 文件生成 Version.h（与 fire_tsf 一致）。 -->
+  <!-- VERSION 不纳入 git；缺失时回退到已跟踪的基线 VERSION.default。 -->
   <!-- ===================================================================== -->
   <Target Name="GenerateVersionHeader" BeforeTargets="ClCompile">
     <PropertyGroup>

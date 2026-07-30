@@ -52,6 +52,7 @@ if(BUILD_CORE)
         core/src/key_event.cpp
         core/src/punctuation.cpp
         core/src/dict_manager.cpp
+        core/src/dict_local_impl.cpp
         core/src/input_engine.cpp
         core/src/input_mode_cache.cpp
         core/src/statistics.cpp
@@ -60,6 +61,17 @@ if(BUILD_CORE)
     target_include_directories(fire_core PUBLIC core/include)
 
     target_link_libraries(fire_core PUBLIC ${FIRE_SQLITE3_LIB})
+endif()
+
+# ---- IPC 协议编解码静态库（纯 C++，跨平台，可单测）----
+# 依赖 fire_core 的 candidate.h / dict_manager.h（QueryResult）等头文件。
+if(BUILD_CORE)
+    add_library(fire_ipc STATIC
+        ipc/src/wire.cpp
+        ipc/src/protocol.cpp
+    )
+    target_include_directories(fire_ipc PUBLIC ipc/include)
+    target_link_libraries(fire_ipc PUBLIC fire_core)
 endif()
 
 # ---- 词库构建工具 ----
@@ -78,9 +90,11 @@ if(BUILD_TESTS AND BUILD_CORE)
         tests/test_engine.cpp
         tests/test_input_mode_cache.cpp
         tests/test_statistics.cpp
+        tests/test_ipc_protocol.cpp
     )
     target_include_directories(fire_tests PRIVATE tests)
     target_link_libraries(fire_tests PRIVATE fire_core)
+    target_link_libraries(fire_tests PRIVATE fire_ipc)
     target_link_libraries(fire_tests PRIVATE ${FIRE_SQLITE3_LIB})
 
     add_test(NAME fire_tests COMMAND fire_tests)

@@ -14,6 +14,7 @@
 #include "fire/candidate.h"
 #include "fire/config.h"
 #include "fire/dict_manager.h"
+#include "fire/dict_service.h"
 #include "fire/input_client.h"
 #include "fire/input_mode_cache.h"
 #include "fire/key_event.h"
@@ -30,7 +31,7 @@ struct CandidateInsertedInfo {
 
 class InputEngine {
 public:
-    InputEngine(Config& config, DictManager& dict, InputClient& client);
+    InputEngine(Config& config, IDictService& dict, InputClient& client);
 
     // 主入口，对应 handle(_:client:)。返回 true 表示事件已被输入法消费。
     bool handle_key(const KeyEvent& event);
@@ -73,7 +74,7 @@ public:
 
 private:
     Config& config_;
-    DictManager& dict_;
+    IDictService& dict_;
     InputClient& client_;
     PunctuationConverter punctuation_;
 

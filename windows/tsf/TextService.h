@@ -22,7 +22,9 @@
 #include "TsfInputClient.h"
 
 #include "fire/config.h"
+#include "fire/dict_local_impl.h"
 #include "fire/dict_manager.h"
+#include "fire/dict_service.h"
 #include "fire/input_engine.h"
 #include "fire/statistics.h"
 
@@ -84,9 +86,10 @@ public:
 private:
     // 引擎/词库/配置（每个 TIP 实例一份）
     fire::Config config_;
-    std::unique_ptr<fire::DictManager> dict_;
+    // 查字/统计服务：默认经 IPC 转发给 fire_dictd.exe（DictIpcProxy），
+    // 后台不可用时回退为本进程直接查库（DictLocalImpl）。
+    std::unique_ptr<fire::IDictService> dictService_;
     std::unique_ptr<fire::InputEngine> engine_;
-    std::unique_ptr<fire::Statistics> stats_;
     TsfInputClient inputClient_;
     KeyEventTranslator translator_;
     std::unique_ptr<CandidateWindowController> candWindow_;

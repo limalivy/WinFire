@@ -2,7 +2,7 @@
 # winFire Installer Build Script
 #
 # 流程：
-#   1. 用 MSBuild 编译 fire_tsf.vcxproj / fire_config.vcxproj (Release|x64)
+#   1. 用 MSBuild 编译 fire_tsf.vcxproj / fire_config.vcxproj / fire_dictd.vcxproj (Release|x64)
 #   2. 用 CMake 构建 tablebuilder.exe（生成预构建词库用）
 #   3. 用 tablebuilder 预构建 wb_py_dict.sqlite 到 installer\staging\
 #   4. 生成默认 config.json 到 installer\staging\
@@ -64,7 +64,8 @@ if (-not $SkipBuild) {
 
     $projects = @(
         "windows\tsf\fire_tsf.vcxproj",
-        "windows\config\fire_config.vcxproj"
+        "windows\config\fire_config.vcxproj",
+        "windows\dictd\fire_dictd.vcxproj"
     )
     foreach ($p in $projects) {
         $proj = Join-Path $RepoRoot $p

@@ -2,7 +2,10 @@
 //  状态机测试，对应 FireInputController.swift 的核心路径
 //
 #include "test_util.h"
+#include "fire/dict_local_impl.h"
 #include "fire/input_engine.h"
+
+#include <memory>
 
 using namespace fire;
 
@@ -76,9 +79,9 @@ static Config make_cfg() {
 TEST_CASE(engine_alpha_input_builds_original) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     CHECK(eng.handle_key(alpha("a")));
     CHECK_STR_EQ(eng.original_string(), "a");
@@ -91,9 +94,9 @@ TEST_CASE(engine_alpha_input_builds_original) {
 TEST_CASE(engine_space_commits_first_candidate) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("a"));  // aa -> 式
@@ -107,9 +110,9 @@ TEST_CASE(engine_space_commits_first_candidate) {
 TEST_CASE(engine_number_selects_candidate) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));  // a -> 候选含 工/式/工期...
     size_t n = eng.candidates().size();
@@ -123,9 +126,9 @@ TEST_CASE(engine_number_selects_candidate) {
 TEST_CASE(engine_backspace_deletes) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("a"));
@@ -141,9 +144,9 @@ TEST_CASE(engine_backspace_deletes) {
 TEST_CASE(engine_enter_commits_original) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("b"));  // b 非字母? b是字母, original=ab
@@ -155,9 +158,9 @@ TEST_CASE(engine_enter_commits_original) {
 TEST_CASE(engine_esc_clears) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("a"));
@@ -169,9 +172,9 @@ TEST_CASE(engine_esc_clears) {
 TEST_CASE(engine_en_mode_passthrough) {
     seed_engine();
     Config cfg = make_cfg();
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
     eng.set_input_mode(InputMode::EnUS, false);
     // 英文模式：字母不被消费
     CHECK(!eng.handle_key(alpha("a")));
@@ -183,9 +186,9 @@ TEST_CASE(engine_punctuation_commit) {
     Config cfg = make_cfg();
     cfg.punctuation_mode = PunctuationMode::ZhHans;
     cfg.enable_punctuation_commit = true;
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("a"));  // aa -> 式
@@ -200,9 +203,9 @@ TEST_CASE(engine_reverse_lookup_flow) {
     seed_engine();
     Config cfg = make_cfg();
     cfg.z_key_query = true;
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     CHECK(eng.handle_key(alpha("`")));
     CHECK_STR_EQ(eng.original_string(), "`");
@@ -218,9 +221,9 @@ TEST_CASE(engine_wubi52_ding_combo_on_space) {
     seed_engine();
     Config cfg = make_cfg();
     cfg.wubi_ding_mode = WubiDingMode::Ding52;
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("g"));
     eng.handle_key(alpha("g"));
@@ -238,9 +241,9 @@ TEST_CASE(engine_wubi53_ding_combo_shown) {
     seed_engine();
     Config cfg = make_cfg();
     cfg.wubi_ding_mode = WubiDingMode::Ding53;
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("w"));
     eng.handle_key(alpha("w"));
@@ -255,9 +258,9 @@ TEST_CASE(engine_wubi35_ding_space_pending) {
     seed_engine();
     Config cfg = make_cfg();
     cfg.wubi_ding_mode = WubiDingMode::Ding35;
-    DictManager dm(cfg);
+    DictLocalImpl svc(std::make_unique<DictManager>(cfg), nullptr);
     FakeClient client;
-    InputEngine eng(cfg, dm, client);
+    InputEngine eng(cfg, svc, client);
 
     eng.handle_key(alpha("a"));
     eng.handle_key(alpha("a"));

@@ -24,6 +24,8 @@ $TsfDllInstalled = "fire_tsf_$Version.dll"
 
 $TsfDll      = "$RepoRoot\windows\tsf\x64\Release\fire_tsf.dll"
 $ConfigExe   = "$RepoRoot\windows\config\x64\Release\fire_config.exe"
+# 后台查字进程（正常 IL）：供 AppContainer 沙箱进程经 IPC 查库。
+$DictdExe    = "$RepoRoot\windows\dictd\x64\Release\fire_dictd.exe"
 # tablebuilder：VS 多配置生成器产物在 build\Release\，单配置生成器在 build\，两处都探测。
 if (Test-Path "$RepoRoot\build\Release\tablebuilder.exe") {
     $Tablebuilder = "$RepoRoot\build\Release\tablebuilder.exe"
@@ -63,7 +65,8 @@ Write-Host "[1/5] Checking build artifacts..." -ForegroundColor Yellow
 
 @(
     @{Path=$TsfDll;      Name="fire_tsf.dll"},
-    @{Path=$ConfigExe;   Name="fire_config.exe"}
+    @{Path=$ConfigExe;   Name="fire_config.exe"},
+    @{Path=$DictdExe;    Name="fire_dictd.exe"}
 ) | ForEach-Object {
     if (-not (Test-Path $_.Path)) {
         Write-Host ("  [FAIL] Not found: " + $_.Name) -ForegroundColor Red
@@ -76,6 +79,9 @@ Write-Host "[1/5] Checking build artifacts..." -ForegroundColor Yellow
 # ---- 2. Install program files ----
 Write-Host "[2/5] Installing program files..." -ForegroundColor Yellow
 $null = New-Item -ItemType Directory -Path $InstallDir -Force
+
+# 结束可能常驻的旧后台查字进程，释放 fire_dictd.exe 映像占用（否则覆盖失败）。
+& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
 
 # 反注册并清理旧版本 DLL（若存在），随后写入版本化文件名的新 DLL。
 # 旧 DLL 若仍被宿主进程占用而删不掉，标记为重启后删除，不阻塞安装。
@@ -96,7 +102,13 @@ Get-ChildItem -Path $InstallDir -Filter "fire_tsf_*.dll" -ErrorAction SilentlyCo
 
 Copy-Item $TsfDll      "$InstallDir\$TsfDllInstalled" -Force
 Copy-Item $ConfigExe   "$InstallDir\fire_config.exe" -Force
+Copy-Item $DictdExe    "$InstallDir\fire_dictd.exe" -Force
 Write-Host ("  [OK]   " + $InstallDir) -ForegroundColor Green
+
+# 授予 ALL APPLICATION PACKAGES（AppContainer，SID S-1-15-2-1）对程序目录的
+# 读取+执行权限，使 SearchHost.exe / UWP 等沙箱进程能加载 fire_tsf.dll 并读 tables。
+& icacls "$InstallDir" /grant "*S-1-15-2-1:(OI)(CI)(RX)" /T /C /Q 2>&1 | Out-Null
+Write-Host "  [OK]   Granted AppContainer ACL on program dir" -ForegroundColor Green
 
 # ---- 3. User data directory + config ----
 Write-Host "[3/5] Creating user data..." -ForegroundColor Yellow
@@ -256,6 +268,11 @@ try {
 } finally {
     Pop-Location
 }
+
+# 立即拉起后台查字进程（正常 IL），使沙箱进程首次输入即可出候选，
+# 无需等 DLL 端按需拉起（AppContainer 进程通常无权 CreateProcess）。
+Start-Process -FilePath "$InstallDir\fire_dictd.exe" -WindowStyle Hidden
+Write-Host "  [OK]   Started fire_dictd.exe backend" -ForegroundColor Green
 
 # ---- Done ----
 Write-Host ""
