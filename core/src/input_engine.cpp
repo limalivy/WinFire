@@ -405,6 +405,8 @@ std::optional<bool> InputEngine::caps_lock_handler(const KeyEvent& e) {
     if (e.is_modifier_change && e.changed_modifier == SpecialKey::CapsLock) {
         if (e.caps_lock && !original_string_.empty()) {
             commit_original_text_as_uppercase();
+            // 不切换输入模式：CapsLock 灯亮由系统管理，用户期望的是
+            // "上屏大写字符 + CapsLock 灯亮"，而非切到英文模式。
             return true;
         }
         return false;

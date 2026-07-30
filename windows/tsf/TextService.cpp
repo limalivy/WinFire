@@ -233,6 +233,10 @@ STDMETHODIMP CFireTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     }
     FIRE_LOG(L"[WinFire] Activate: InitEngine OK\n");
 
+    // 初始化 currentAppId_，避免首次 OnSetFocus(docmgr) 误判为跨应用切换而 clean()
+    currentAppId_ = inputClient_.bundle_id();
+    FIRE_LOG(L"[WinFire] Activate: currentAppId='%hs'\n", currentAppId_.c_str());
+
     // 注册 ThreadMgrEventSink
     CComPtr<ITfSource> source;
     if (SUCCEEDED(threadMgr_->QueryInterface(IID_ITfSource, (void**)&source))) {
@@ -337,8 +341,22 @@ STDMETHODIMP CFireTextService::OnSetFocus(ITfDocumentMgr* pdimFocus,
     FIRE_LOG(L"[WinFire] OnSetFocus(docmgr): pdimFocus=%p engine=%p keepApp=%d [tid=%lu]\n",
              (void*)pdimFocus, (void*)engine_.get(), config_.keep_app_input_mode ? 1 : 0,
              GetCurrentThreadId());
-    // 文档焦点切换：先清空当前组字并隐藏候选窗
-    if (engine_) engine_->clean();
+
+    // 计算当前应用标识，用于判断是否真正跨应用切换
+    std::string appId;
+    if (pdimFocus) {
+        appId = inputClient_.bundle_id();
+    }
+    bool appChanged = (appId != currentAppId_);
+
+    // 仅在真正跨应用切换时才清空组字。
+    // 注意：StartComposition/SetCompositionText 会触发 OnSetFocus，若无条件 clean
+    // 会把刚建立的组字立即清空，导致 CapsLock/Shift 上屏失效、一简字卡住等问题。
+    if (engine_ && appChanged) {
+        FIRE_LOG(L"[WinFire] OnSetFocus(docmgr): app changed '%hs' -> '%hs', cleaning\n",
+                 currentAppId_.c_str(), appId.c_str());
+        engine_->clean();
+    }
 
     // per-app 输入模式
     if (engine_ && config_.keep_app_input_mode) {
@@ -349,16 +367,19 @@ STDMETHODIMP CFireTextService::OnSetFocus(ITfDocumentMgr* pdimFocus,
             }
         } else {
             // 获得焦点：先把当前模式保存给上一个应用，再恢复新应用的模式。
-            std::string appId = inputClient_.bundle_id();
             FIRE_LOG(L"[WinFire] OnSetFocus(docmgr): appId='%hs' currentAppId='%hs'\n",
                      appId.c_str(), currentAppId_.c_str());
-            if (!currentAppId_.empty() && currentAppId_ != appId) {
+            if (!currentAppId_.empty() && appChanged) {
                 engine_->save_input_mode_for_app(currentAppId_);
             }
             bool changed = engine_->restore_input_mode_for_app(appId);
             currentAppId_ = appId;
             if (changed) RefreshLangBar();
         }
+    } else if (pdimFocus) {
+        // 即便不开 keep_app_input_mode，也要更新 currentAppId_，
+        // 否则 appChanged 判定会失效（后续同应用切换会被误判为跨应用）
+        currentAppId_ = appId;
     }
     return S_OK;
 }
@@ -404,8 +425,8 @@ STDMETHODIMP CFireTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam,
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
     // 查询阶段：不改写键盘死键状态
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb, /*noStateChange=*/true);
-    // 修饰键单击检测放在 OnTest*（每次按键必被调用），裸 Shift 不会被吃、OnKeyDown 收不到。
-    translator_.shiftChecker.OnKeyDown((UINT)wParam);
+    // 注意：shiftChecker 状态机在 OnKeyDown/OnKeyUp 中维护，不放这里。
+    // 原因：记事本等宿主不调用 OnTest* 回调，只调用 OnKeyDown/OnKeyUp。
     bool eat = ShouldEat(ev);
     *pfEaten = eat ? TRUE : FALSE;
     FIRE_LOG(L"[WinFire] OnTestKeyDown: eat=%d text='%hs'\n", eat ? 1 : 0, ev.text.c_str());
@@ -414,13 +435,10 @@ STDMETHODIMP CFireTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam,
 
 STDMETHODIMP CFireTextService::OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
                                            BOOL* pfEaten) {
-    // Shift 单击切换：在此判断（OnTestKeyUp 每次抬起必被调用）。
-    // 若检测到单击且允许中英切换，则吃掉这次 Shift 抬起，使 TSF 随后调用 OnKeyUp 执行切换。
     *pfEaten = FALSE;
-    if (translator_.shiftChecker.OnKeyUp((UINT)wParam) && !config_.disable_en_mode) {
-        pendingShiftToggle_ = true;
-        *pfEaten = TRUE;
-    }
+    FIRE_LOG(L"[WinFire] OnTestKeyUp: wParam=0x%lX [tid=%lu]\n",
+             (unsigned long)wParam, GetCurrentThreadId());
+    // Shift 单击检测在 OnKeyUp 中完成（记事本不调用 OnTestKeyUp）
     return S_OK;
 }
 
@@ -434,22 +452,53 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
 
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb);
 
-    // Shift 单击中英切换：直接在此（OnKeyDown）处理，因为 OnTestKeyUp 对
-    // 裸修饰键（Shift/Ctrl/Alt）的回调在多数 TSF 宿主（Notepad/Word/Chrome…）
-    // 中不会被调用，仅少数控件（Explorer 地址栏等）会触发。
-    // 按下即生效的行为也更符合中文输入法用户直觉。
-    if (!config_.disable_en_mode && engine_ &&
-        (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) &&
-        ev.text.empty() && ev.special == fire::SpecialKey::None) {
-        fire::KeyEvent toggleEv;
-        toggleEv.toggle_input_mode_request = true;
-        bool eaten = ProcessKeyInEditSession(pic, toggleEv);
-        // 避免 OnKeyUp 中重复触发：清除 pendingShiftToggle_
-        pendingShiftToggle_ = false;
-        *pfEaten = eaten ? TRUE : FALSE;
-        FIRE_LOG(L"[WinFire] OnKeyDown: shift toggle, eaten=%d\n", eaten ? 1 : 0);
+    // Shift 按下：记录状态，不立即切换（避免破坏 Shift+6 等组合键）。
+    // 单击检测在 OnKeyUp 中完成：若 Shift 抬起前没有其他键按下，则视为单击切换。
+    // 注意：记事本等宿主不调用 OnTestKeyDown/OnTestKeyUp，只调用 OnKeyDown/OnKeyUp，
+    // 故 shiftChecker 状态机必须在 OnKeyDown/OnKeyUp 中维护。
+    if (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+        translator_.shiftChecker.OnKeyDown((UINT)wParam);
+
+        // 有组字时：Shift 单击立即上屏字母 + 切换英文（用户期望的行为）。
+        // 组字中途按 Shift+6 输出符号的场景罕见，优先满足常见的"上屏+切换"。
+        if (!config_.disable_en_mode && engine_ && !engine_->original_string().empty()) {
+            fire::KeyEvent toggleEv;
+            toggleEv.toggle_input_mode_request = true;
+            bool eaten = ProcessKeyInEditSession(pic, toggleEv);
+            *pfEaten = eaten ? TRUE : FALSE;
+            FIRE_LOG(L"[WinFire] OnKeyDown: shift toggle with composition, eaten=%d\n", eaten ? 1 : 0);
+            return S_OK;
+        }
+
+        // 无组字：放行，等待 OnKeyUp 判定单击
+        *pfEaten = FALSE;
+        FIRE_LOG(L"[WinFire] OnKeyDown: shift down, pending OnKeyUp\n");
         return S_OK;
     }
+
+    // CapsLock：组字时按下，上屏已输入字母（大写）。
+    // 内核 caps_lock_handler 已实现该逻辑，但平台层从未生成 is_modifier_change
+    // 的 CapsLock 事件。这里显式构造事件交给引擎处理。
+    if (wParam == VK_CAPITAL && engine_) {
+        bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+        if (capsOn && !engine_->original_string().empty()) {
+            fire::KeyEvent capEv;
+            capEv.is_modifier_change = true;
+            capEv.changed_modifier = fire::SpecialKey::CapsLock;
+            capEv.caps_lock = true;
+            bool eaten = ProcessKeyInEditSession(pic, capEv);
+            *pfEaten = eaten ? TRUE : FALSE;
+            FIRE_LOG(L"[WinFire] OnKeyDown: CapsLock with composition, eaten=%d\n", eaten ? 1 : 0);
+            return S_OK;
+        }
+        // 无组字：透传，让系统切换大写状态
+        *pfEaten = FALSE;
+        FIRE_LOG(L"[WinFire] OnKeyDown: CapsLock pass-through (no composition)\n");
+        return S_OK;
+    }
+
+    // 非 Shift 键：通知 shiftChecker 有其他键按下（破坏单击条件）
+    translator_.shiftChecker.OnKeyDown((UINT)wParam);
 
     if (!ShouldEat(ev)) {
         *pfEaten = FALSE;
@@ -462,20 +511,23 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     return S_OK;
 }
 
-STDMETHODIMP CFireTextService::OnKeyUp(ITfContext* pic, WPARAM /*wParam*/, LPARAM /*lParam*/,
+STDMETHODIMP CFireTextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
                                        BOOL* pfEaten) {
     *pfEaten = FALSE;
-    // Shift 单击 -> 中英文切换。检测已在 OnTestKeyUp 完成并置位 pendingShiftToggle_，
-    // 且已吃掉该 Shift 抬起，故此处必被调用；这里执行真正切换。
-    if (pendingShiftToggle_) {
-        pendingShiftToggle_ = false;
-        FIRE_LOG(L"[WinFire] OnKeyUp: Shift single-click detected, toggling mode\n");
-        fire::KeyEvent ev;
-        ev.is_modifier_change = true;
-        ev.changed_modifier = fire::SpecialKey::ShiftKey;
-        ev.toggle_input_mode_request = true;
-        ProcessKeyInEditSession(pic, ev);
-        *pfEaten = TRUE;
+    FIRE_LOG(L"[WinFire] OnKeyUp: wParam=0x%lX [tid=%lu]\n",
+             (unsigned long)wParam, GetCurrentThreadId());
+
+    // Shift 抬起：用 shiftChecker 检测是否为单击（按下与抬起之间无其他键、间隔短）
+    if (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
+        if (!config_.disable_en_mode && translator_.shiftChecker.OnKeyUp((UINT)wParam)) {
+            FIRE_LOG(L"[WinFire] OnKeyUp: Shift single-click detected, toggling mode\n");
+            fire::KeyEvent ev;
+            ev.is_modifier_change = true;
+            ev.changed_modifier = fire::SpecialKey::ShiftKey;
+            ev.toggle_input_mode_request = true;
+            ProcessKeyInEditSession(pic, ev);
+            *pfEaten = TRUE;
+        }
     }
     return S_OK;
 }
