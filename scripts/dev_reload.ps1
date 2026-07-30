@@ -98,7 +98,16 @@ if (-not $SkipBuild) {
 # ---- 2. Kill ctfmon to release DLL file locks ----
 Step "Releasing TSF host locks..."
 # 结束常驻的后台查字进程，释放 fire_dictd.exe 映像占用以便覆盖新构建。
-& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
+$dictdKilled = $false
+Get-Process -Name "fire_dictd" -ErrorAction SilentlyContinue | ForEach-Object {
+    Stop-Process -Id $_.Id -Force
+    $dictdKilled = $true
+}
+if ($dictdKilled) {
+    Write-Host "  [OK] fire_dictd.exe stopped" -ForegroundColor Green
+} else {
+    Write-Host "  (fire_dictd not running)" -ForegroundColor DarkGray
+}
 $ctfmonKilled = $false
 Get-Process -Name "ctfmon" -ErrorAction SilentlyContinue | ForEach-Object {
     Stop-Process -Id $_.Id -Force

@@ -55,6 +55,7 @@ dist/
 
 # ---- Generated version header (single source: repo-root VERSION) ----
 windows/tsf/Version.h
+windows/dictd/Version.h
 
 # ---- Working version file (bumped freely during local test; not tracked) ----
 # 基线版本 VERSION.default 纳入版本控制（仅正式发版递增）；本地测试用的
@@ -68,3 +69,6 @@ windows/tsf/Version.h
 .idea/
 *.swp
 *~
+
+# ---- Code review report (local only, not tracked) ----
+CODE_REVIEW.md
