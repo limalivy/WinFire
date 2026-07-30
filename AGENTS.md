@@ -70,7 +70,7 @@ winFire/
 │   ├── install.ps1             # 直接部署（不走 installer，需管理员）
 │   └── uninstall.ps1           # 反注册 + 删除程序文件（用户数据可选）
 ├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）
-└── third_party/sqlite3/        # sqlite3 源码（直接编译进 DLL/EXE）
+└── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
 ```
 
 ## 3. macOS -> 跨平台内核 模块映射
@@ -144,8 +144,10 @@ spaceKey -> punctuation
   下沉到一个正常完整性级别（IL）的后台进程 `fire_dictd.exe`，DLL 端经 IPC 转发。
 - **接口抽象**：`IDictService`（`core/include/fire/dict_service.h`）纯虚接口，`InputEngine`
   只依赖它。两种实现：
-  - `DictLocalImpl`（内核内，直接持 `DictManager`+`Statistics`）——非沙箱进程/后台不可用时回退。
-  - `DictIpcProxy`（`windows/tsf/`）——把调用编码成 IPC 请求转发给 `fire_dictd.exe`。
+  - `DictLocalImpl`（内核内，直接持 `DictManager`+`Statistics`）——仅供 `fire_dictd.exe` 后台
+    进程与内核测试使用；**DLL 不再链接此实现**。
+  - `DictIpcProxy`（`windows/tsf/`）——DLL 唯一使用的实现，把调用编码成 IPC 请求转发给
+    `fire_dictd.exe`。后台不可用时 `IsAvailable()=false`，引擎降级透传（不再回退本进程查库）。
 - **协议**（`ipc/`，纯 C++17 入 CMake 可测）：16 字节定长帧头（magic `0x57464452`"WFDR" /
   version u16=1 / msg_type u16 / request_id u32 / payload_len u32）+ 手写小端二进制 payload
   （`Writer/Reader`，越界检查）。MsgType：`0x01` Hello、`0x02` QueryCandidates、`0x03`
@@ -154,7 +156,7 @@ spaceKey -> punctuation
 - **传输**：命名管道 `\\.\pipe\WinFire_Dict_<会话id>`（`PIPE_TYPE_MESSAGE`），SDDL
   `D:(A;;GRGW;;;WD)(A;;GRGW;;;AC)S:(ML;;NW;;;LW)` 放开 AppContainer + 低 IL 访问。
   server/client 均用 `FILE_FLAG_OVERLAPPED` 创建，所有读写走 overlapped + 超时。
-  查询同步（20ms 超时，超时/失败即回退空结果并标记重连）；统计/调频/Reinit 异步
+  查询同步（20ms 超时，超时/失败即返回空结果并标记重连）；统计/调频/Reinit 异步
   fire-and-forget。
 - **后台生命周期**：单实例 mutex `Global\WinFire_Dictd_<会话id>`；空闲超时退出（每轮
   30s，连续 20 轮约 10 分钟无连接自动退出）；由安装脚本/正常 IL 进程拉起（AppContainer
@@ -186,13 +188,13 @@ IPC 协议库（`ipc/`）随 `BUILD_CORE` 一并构建，`test_ipc_protocol.cpp`
 > fire_tsf.dll 仍需 ATL（纯原生 COM）。
 
 ```powershell
-# 编译 TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient + ipc/ 协议）
+# 编译 TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient + ipc/ 协议；不含 SQLite）
 MSBuild.exe windows\tsf\fire_tsf.vcxproj /p:Configuration=Release /p:Platform=x64
 
 # 编译配置工具 EXE（fire_config.exe）
 MSBuild.exe windows\config\fire_config.vcxproj /p:Configuration=Release /p:Platform=x64
 
-# 编译后台查字进程 EXE（fire_dictd.exe，命名管道 server + DictManager+Statistics）
+# 编译后台查字进程 EXE（fire_dictd.exe，命名管道 server + DictManager+Statistics + SQLite）
 MSBuild.exe windows\dictd\fire_dictd.vcxproj /p:Configuration=Release /p:Platform=x64
 
 # 构建 tablebuilder.exe（生成预构建词库用）
@@ -276,7 +278,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - 语言栏按钮（`LangBarButton.h/.cpp`，`ITfLangBarItemButton` + `ITfSource`）替代 macOS 状态栏图标：
   显示「中/英」，左键切换、菜单直选中/英；tooltip 为「微火五笔：点击切换中/英文」；
   `Activate/Deactivate` 通过 `ITfLangBarItemMgr` 注册/注销。
-- 输入统计：`Activate` 时若开启统计开关则创建 `fire::Statistics` 并注册引擎回调写库。
+- 输入统计：DLL 端不直接持 `Statistics`，上屏事件经 `IDictService` 回调→`DictIpcProxy`→IPC→
+  `fire_dictd.exe` 写库（`RecordStat` 异步 fire-and-forget）。
 - 按应用输入模式：`OnSetFocus(ITfDocumentMgr*)` 按 `bundle_id()`（宿主 exe 名）做 restore/save。
 - 全量配置：`LoadConfigFromDisk` 调用 `firecfg::ConfigStore::Load` 读取 `config.json`。
 - **SEH 崩溃保护**：`ActivateEx` 通过 `InitEngineSafe()`（`__try/__except` 包裹 `InitEngine`）

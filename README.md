@@ -17,8 +17,9 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - **跨平台内核**：状态机、词库查询、标点转换、统计等核心逻辑以纯 C++17 实现，可在 macOS / Linux 上编译验证（`cmake + ctest`），便于回归测试。
 - **平台层薄**：Windows 层只做按键翻译、组字区管理、UI 渲染，不包含业务逻辑。
 - **原生 COM**：TSF TIP 使用 ATL 纯原生 COM，不依赖 .NET / WPF / Electron，加载到任意宿主进程（QQ / Word / Chrome…）都能稳定工作。
-- **静态链接**：fire_tsf.dll / fire_config.exe 均静态链接 CRT + ATL（fire_tsf）与 CRT（fire_config），避免与宿主进程的 CRT 版本冲突；fire_config.exe 不再依赖 MFC，安装包体积显著缩小。
+- **静态链接**：fire_tsf.dll / fire_config.exe / fire_dictd.exe 均静态链接 CRT（fire_tsf 另链接 ATL），避免与宿主进程的 CRT 版本冲突；fire_config.exe 不再依赖 MFC，安装包体积显著缩小。fire_tsf.dll 已移除 SQLite 依赖（查字/统计完全经 IPC 转发给 fire_dictd.exe 后台进程），DLL 体积进一步减小约 1MB。
 - **数据隔离**：程序文件在 `%ProgramFiles%\WinFire\`，用户数据在 `%APPDATA%\WinFire\`，卸载默认保留用户数据。
+- **查字进程分离**：TSF DLL 加载进 AppContainer 沙箱进程（SearchHost.exe / UWP）时无权读写用户数据目录，故所有查库/统计下沉到正常完整性级别的后台进程 `fire_dictd.exe`，DLL 经命名管道 IPC 转发。后台空闲约 10 分钟自动退出，由 DLL 在首次查询时按需拉起。
 
 ## 当前程序功能
 
@@ -121,11 +122,13 @@ winFire/
 ├── windows/                    # Windows 平台层
 │   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
-│   └── config/                 # 纯 Win32 配置界面（fire_config.exe）
+│   ├── config/                 # 纯 Win32 配置界面（fire_config.exe）
+│   ├── dictd/                  # 后台查字进程（fire_dictd.exe，命名管道 server + SQLite）
+│   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具
 ├── installer/                  # Inno Setup 脚本与预构建资源
 ├── scripts/                    # PowerShell 构建/安装/卸载脚本
 ├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）
-├── third_party/sqlite3/        # sqlite3 源码
+├── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
 ├── CMakeLists.txt              # 仅构建内核 + 测试 + tablebuilder
 └── AGENTS.md                   # 项目详细架构说明
 ```
