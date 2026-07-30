@@ -127,7 +127,7 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
         }
         case MsgType::QueryCandidates: {
             QueryRequest req = decode_query_request(r);
-            QueryResult result;
+            fire::QueryResult result;
             if (dict_) result = dict_->get_candidates(req.query, req.page);
             responsePayload = encode_query_result(result);
             needResponse = true;
@@ -135,7 +135,7 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
         }
         case MsgType::ReverseLookup: {
             QueryRequest req = decode_query_request(r);
-            QueryResult result;
+            fire::QueryResult result;
             if (dict_) result = dict_->get_reverse_lookup_candidates(req.query, req.page);
             responsePayload = encode_query_result(result);
             needResponse = true;

@@ -5,6 +5,13 @@
 
 #include "../common/IpcShared.h"
 
+namespace {
+
+// 取本 DLL 模块句柄用：用本编译单元静态函数地址定位所在模块。
+void GetModuleAnchor() {}
+
+}  // namespace
+
 namespace firewin {
 
 NamedPipeClient::~NamedPipeClient() { Disconnect(); }
@@ -39,7 +46,7 @@ bool NamedPipeClient::LaunchBackend() {
     HMODULE self = nullptr;
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(&LaunchBackend), &self)) {
+            reinterpret_cast<LPCWSTR>(&GetModuleAnchor), &self)) {
         return false;
     }
     wchar_t path[MAX_PATH] = {0};
