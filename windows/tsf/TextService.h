@@ -101,12 +101,15 @@ private:
     // per-app 输入模式：记录上一个获得焦点的应用标识，失焦时保存
     std::string currentAppId_;
 
-    // Shift 单击切换中英文：在 OnKeyUp 中用 shiftChecker 检测单击。
-    // shiftChecker 状态机在 OnKeyDown/OnKeyUp 中维护（不放 OnTest*，
-    // 因为记事本等宿主不调用 OnTestKeyDown/OnTestKeyUp）。
-    bool pendingShiftToggle_ = false;  // 保留用于未来扩展，当前未使用
+    // Shift 单击切换中英文：shiftChecker 状态机在 OnTestKeyDown/OnTestKeyUp 中
+    // 维护（OnTest* 每次按键必被调用，而 OnKeyDown/OnKeyUp 仅在 eat=TRUE 时才调用，
+    // 裸 Shift 的 ShouldEat=FALSE → OnKeyDown 收不到）。检测到单击后置位此标志，
+    // 在（因吃掉 Shift 抬起而必被调用的）OnKeyUp 中执行真正切换。
+    bool pendingShiftToggle_ = false;
 
-    // CapsLock 组字上屏：组字时按 CapsLock 上屏大写字母，不切模式
+    // CapsLock 组字上屏：组字时按 CapsLock，OnTestKeyUp 置位此标志，
+    // OnKeyUp 中发送 caps_lock 事件给引擎上屏大写字符（不切模式）。
+    bool pendingCapsLockCommit_ = false;
 
     void InitEngine();
     void LoadConfigFromDisk();  // 读取 config.json

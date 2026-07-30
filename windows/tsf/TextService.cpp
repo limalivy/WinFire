@@ -425,8 +425,10 @@ STDMETHODIMP CFireTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam,
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
     // 查询阶段：不改写键盘死键状态
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb, /*noStateChange=*/true);
-    // 注意：shiftChecker 状态机在 OnKeyDown/OnKeyUp 中维护，不放这里。
-    // 原因：记事本等宿主不调用 OnTest* 回调，只调用 OnKeyDown/OnKeyUp。
+    // shiftChecker 状态机在 OnTest* 中维护：OnTest* 每次按键必被调用（无论是否吃键），
+    // 而 OnKeyDown/OnKeyUp 仅在该键被 OnTest* 判定为 eat=TRUE 时才调用。
+    // 裸 Shift 的 ShouldEat=FALSE → OnKeyDown 收不到，故必须在此记录状态。
+    translator_.shiftChecker.OnKeyDown((UINT)wParam);
     bool eat = ShouldEat(ev);
     *pfEaten = eat ? TRUE : FALSE;
     FIRE_LOG(L"[WinFire] OnTestKeyDown: eat=%d text='%hs'\n", eat ? 1 : 0, ev.text.c_str());
@@ -438,7 +440,20 @@ STDMETHODIMP CFireTextService::OnTestKeyUp(ITfContext* /*pic*/, WPARAM wParam, L
     *pfEaten = FALSE;
     FIRE_LOG(L"[WinFire] OnTestKeyUp: wParam=0x%lX [tid=%lu]\n",
              (unsigned long)wParam, GetCurrentThreadId());
-    // Shift 单击检测在 OnKeyUp 中完成（记事本不调用 OnTestKeyUp）
+    // Shift 单击切换：OnTestKeyUp 每次抬起必被调用。检测到单击则吃掉此次抬起，
+    // 使 TSF 随后调用 OnKeyUp 执行真正切换（OnKeyUp 在 EditSession 内，可改文档）。
+    if (translator_.shiftChecker.OnKeyUp((UINT)wParam) && !config_.disable_en_mode) {
+        pendingShiftToggle_ = true;
+        *pfEaten = TRUE;
+        FIRE_LOG(L"[WinFire] OnTestKeyUp: Shift single-click detected, pending toggle\n");
+    }
+    // CapsLock 组字上屏：组字时按 CapsLock，吃掉抬起，在 OnKeyUp 中上屏大写字符。
+    // CapsLock 状态由系统键盘驱动管理，吃掉 KeyUp 不影响灯亮/灭。
+    if (wParam == VK_CAPITAL && engine_ && !engine_->original_string().empty()) {
+        pendingCapsLockCommit_ = true;
+        *pfEaten = TRUE;
+        FIRE_LOG(L"[WinFire] OnTestKeyUp: CapsLock with composition, pending commit\n");
+    }
     return S_OK;
 }
 
@@ -452,52 +467,9 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
 
     fire::KeyEvent ev = translator_.Translate((UINT)wParam, scan, kb);
 
-    // Shift 按下：记录状态，不立即切换（避免破坏 Shift+6 等组合键）。
-    // 单击检测在 OnKeyUp 中完成：若 Shift 抬起前没有其他键按下，则视为单击切换。
-    // 注意：记事本等宿主不调用 OnTestKeyDown/OnTestKeyUp，只调用 OnKeyDown/OnKeyUp，
-    // 故 shiftChecker 状态机必须在 OnKeyDown/OnKeyUp 中维护。
-    if (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-        translator_.shiftChecker.OnKeyDown((UINT)wParam);
-
-        // 有组字时：Shift 单击立即上屏字母 + 切换英文（用户期望的行为）。
-        // 组字中途按 Shift+6 输出符号的场景罕见，优先满足常见的"上屏+切换"。
-        if (!config_.disable_en_mode && engine_ && !engine_->original_string().empty()) {
-            fire::KeyEvent toggleEv;
-            toggleEv.toggle_input_mode_request = true;
-            bool eaten = ProcessKeyInEditSession(pic, toggleEv);
-            *pfEaten = eaten ? TRUE : FALSE;
-            FIRE_LOG(L"[WinFire] OnKeyDown: shift toggle with composition, eaten=%d\n", eaten ? 1 : 0);
-            return S_OK;
-        }
-
-        // 无组字：放行，等待 OnKeyUp 判定单击
-        *pfEaten = FALSE;
-        FIRE_LOG(L"[WinFire] OnKeyDown: shift down, pending OnKeyUp\n");
-        return S_OK;
-    }
-
-    // CapsLock：组字时按下，上屏已输入字母（大写）。
-    // 内核 caps_lock_handler 已实现该逻辑，但平台层从未生成 is_modifier_change
-    // 的 CapsLock 事件。这里显式构造事件交给引擎处理。
-    if (wParam == VK_CAPITAL && engine_) {
-        bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-        if (capsOn && !engine_->original_string().empty()) {
-            fire::KeyEvent capEv;
-            capEv.is_modifier_change = true;
-            capEv.changed_modifier = fire::SpecialKey::CapsLock;
-            capEv.caps_lock = true;
-            bool eaten = ProcessKeyInEditSession(pic, capEv);
-            *pfEaten = eaten ? TRUE : FALSE;
-            FIRE_LOG(L"[WinFire] OnKeyDown: CapsLock with composition, eaten=%d\n", eaten ? 1 : 0);
-            return S_OK;
-        }
-        // 无组字：透传，让系统切换大写状态
-        *pfEaten = FALSE;
-        FIRE_LOG(L"[WinFire] OnKeyDown: CapsLock pass-through (no composition)\n");
-        return S_OK;
-    }
-
-    // 非 Shift 键：通知 shiftChecker 有其他键按下（破坏单击条件）
+    // shiftChecker 状态机：Chrome 等不调用 OnTest* 的宿主需要在此维护。
+    // 记事本等调用 OnTest* 的宿主已在 OnTestKeyDown 中维护，此处 idempotent
+    //（ModifierKeyUpChecker::OnKeyDown 有 !modifierDown_ 保护，重复调用安全）。
     translator_.shiftChecker.OnKeyDown((UINT)wParam);
 
     if (!ShouldEat(ev)) {
@@ -517,15 +489,50 @@ STDMETHODIMP CFireTextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM /*
     FIRE_LOG(L"[WinFire] OnKeyUp: wParam=0x%lX [tid=%lu]\n",
              (unsigned long)wParam, GetCurrentThreadId());
 
-    // Shift 抬起：用 shiftChecker 检测是否为单击（按下与抬起之间无其他键、间隔短）
+    // Shift 单击 → 中英文切换。
+    // 两种宿主场景：
+    //   1) 记事本等：OnTestKeyUp 已检测单击并置位 pendingShiftToggle_，此处执行切换。
+    //   2) Chrome 等：不调用 OnTest*，直接调用 OnKeyUp，这里用 shiftChecker 检测单击。
+    // shiftChecker.OnKeyUp idempotent（第一次返回 true，重置 modifierDown_；第二次返回 false）。
     if (wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) {
-        if (!config_.disable_en_mode && translator_.shiftChecker.OnKeyUp((UINT)wParam)) {
-            FIRE_LOG(L"[WinFire] OnKeyUp: Shift single-click detected, toggling mode\n");
+        bool doToggle = false;
+        if (pendingShiftToggle_) {
+            pendingShiftToggle_ = false;
+            doToggle = true;
+        } else if (!config_.disable_en_mode && translator_.shiftChecker.OnKeyUp((UINT)wParam)) {
+            doToggle = true;
+        }
+        if (doToggle) {
+            FIRE_LOG(L"[WinFire] OnKeyUp: Shift single-click, toggling mode\n");
             fire::KeyEvent ev;
             ev.is_modifier_change = true;
             ev.changed_modifier = fire::SpecialKey::ShiftKey;
             ev.toggle_input_mode_request = true;
             ProcessKeyInEditSession(pic, ev);
+            *pfEaten = TRUE;
+        }
+    }
+
+    // CapsLock 组字上屏：组字时按 CapsLock，上屏大写字符（不切模式）。
+    // 同样支持两种宿主场景（记事本经 pendingCapsLockCommit_，Chrome 直接检测组字状态）。
+    if (wParam == VK_CAPITAL) {
+        bool doCommit = false;
+        if (pendingCapsLockCommit_) {
+            pendingCapsLockCommit_ = false;
+            doCommit = true;
+        } else if (engine_ && !engine_->original_string().empty()) {
+            doCommit = true;
+        }
+        if (doCommit) {
+            bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+            FIRE_LOG(L"[WinFire] OnKeyUp: CapsLock commit, capsOn=%d\n", capsOn ? 1 : 0);
+            if (capsOn) {  // 仅切到大写时上屏大写字符
+                fire::KeyEvent ev;
+                ev.is_modifier_change = true;
+                ev.changed_modifier = fire::SpecialKey::CapsLock;
+                ev.caps_lock = true;
+                ProcessKeyInEditSession(pic, ev);
+            }
             *pfEaten = TRUE;
         }
     }
