@@ -130,21 +130,11 @@ void CFireTextService::LoadConfigFromDisk() {
     // 读取 %APPDATA%\WinFire\config.json 的全量配置（不存在则用默认值）
     firecfg::ConfigStore::Load(config_);
 
-    // 词库与统计库路径（优先走注册表固化的绝对路径，确保 SearchHost.exe 等
-    // SYSTEM/AppContainer 进程中也能找到用户数据目录）
-    std::wstring dir = firecfg::GetConfigDir();
-    if (config_.db_path.empty()) {
-        config_.db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\wb_py_dict.sqlite");
-    }
-    if (config_.stats_db_path.empty()) {
-        config_.stats_db_path = KeyEventTranslator::Utf16ToUtf8(dir + L"\\statistics.sqlite");
-    }
     // 标点表：为空时用默认中文标点表
     if (config_.custom_punctuation_settings.empty()) {
         config_.custom_punctuation_settings = fire::default_punctuation();
     }
-    FIRE_LOG(L"[WinFire] LoadConfigFromDisk: db_path='%hs' stats_db_path='%hs'\n",
-             config_.db_path.c_str(), config_.stats_db_path.c_str());
+    // 注：db_path / stats_db_path 由 fire_dictd.exe 后台进程使用，DLL 端不再直接读库。
     FIRE_LOG_EXIT();
 }
 
@@ -154,27 +144,15 @@ void CFireTextService::InitEngine() {
     LoadConfigFromDisk();
     FIRE_LOG(L"[WinFire] InitEngine: config loaded\n");
 
-    // 查字/统计服务注入策略（详见 docs/dict-ipc-design.md §3.2）：
-    //   默认：DictIpcProxy —— 把查库/统计转发给正常 IL 的 fire_dictd.exe，
-    //         使 SearchHost.exe/UWP 等 AppContainer 沙箱进程也能出候选。
-    //   回退：连不上后台（首启失败/被杀）时用 DictLocalImpl 本进程直接查库，
-    //         等价历史行为（非沙箱进程仍可用）。
+    // 查字/统计服务：经 IPC 转发给 fire_dictd.exe（正常 IL 后台进程），
+    // 使 SearchHost.exe/UWP 等 AppContainer 沙箱进程也能出候选。
+    // 后台不可用时 IsAvailable()=false，引擎降级透传（不再回退本进程直接查库）。
     {
         auto proxy = std::make_unique<DictIpcProxy>(inputClient_.bundle_id());
-        bool connected = proxy->Handshake();
-        FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake connected=%d ready=%d\n",
-                 connected ? 1 : 0, proxy->IsAvailable() ? 1 : 0);
-        if (connected) {
-            dictService_ = std::move(proxy);
-        } else {
-            FIRE_LOG(L"[WinFire] InitEngine: backend unavailable, falling back to DictLocalImpl\n");
-            auto dict = std::make_unique<fire::DictManager>(config_);
-            std::unique_ptr<fire::Statistics> stats;
-            if (config_.enable_statistics || config_.enable_hanzi_frequency_statistics) {
-                stats = std::make_unique<fire::Statistics>(config_.stats_db_path);
-            }
-            dictService_ = std::make_unique<fire::DictLocalImpl>(std::move(dict), std::move(stats));
-        }
+        proxy->Handshake();
+        FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake ready=%d\n",
+                 proxy->IsAvailable() ? 1 : 0);
+        dictService_ = std::move(proxy);
     }
 
     FIRE_LOG(L"[WinFire] InitEngine: creating InputEngine\n");

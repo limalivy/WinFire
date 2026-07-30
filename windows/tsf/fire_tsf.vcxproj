@@ -27,7 +27,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\..\ipc\include;$(ProjectDir)..\config;$(ProjectDir)..\..\third_party\sqlite3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\..\ipc\include;$(ProjectDir)..\config;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <!-- 静态链接 CRT（/MT）：TSF 作为 in-process DLL 加载到各种宿主进程
@@ -64,18 +64,15 @@
     <!-- IPC 协议编解码 -->
     <ClCompile Include="..\..\ipc\src\wire.cpp" />
     <ClCompile Include="..\..\ipc\src\protocol.cpp" />
-    <!-- 第三方源码 -->
-    <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
-    <!-- 跨平台内核（与 TIP 一起编译进 DLL） -->
+    <!-- 跨平台内核（与 TIP 一起编译进 DLL）
+         注意：dict_manager / dict_local_impl / statistics 不编入 DLL——
+         查字/统计完全经 IPC 转发至 fire_dictd.exe，DLL 不再直接碰 SQLite。 -->
     <ClCompile Include="..\..\core\src\types.cpp" />
     <ClCompile Include="..\..\core\src\candidate.cpp" />
     <ClCompile Include="..\..\core\src\key_event.cpp" />
     <ClCompile Include="..\..\core\src\punctuation.cpp" />
-    <ClCompile Include="..\..\core\src\dict_manager.cpp" />
-    <ClCompile Include="..\..\core\src\dict_local_impl.cpp" />
     <ClCompile Include="..\..\core\src\input_engine.cpp" />
     <ClCompile Include="..\..\core\src\input_mode_cache.cpp" />
-    <ClCompile Include="..\..\core\src\statistics.cpp" />
     <ClCompile Include="..\..\core\src\utf8.cpp" />
   </ItemGroup>
   <ItemGroup>
