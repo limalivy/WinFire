@@ -35,8 +35,11 @@ public:
     void Show(const fire::CandidatesView& view);
     void Hide();
 
-    // 中英文切换提示（短暂显示）
+    // 中英文切换提示（短暂显示）。
+    // 有光标信息时优先用带 caret 的重载，避免拷贝陈旧 view_.caret 导致定位到
+    // 屏幕左上角；无 caret 信息时退回旧重载（拷贝 view_.caret）。
     void ShowToast(const std::string& label);
+    void ShowToast(const std::string& label, const fire::CaretRect& caret);
 
     // 回调：点击候选 / 翻页（delta>0 下一页）
     void SetOnSelect(std::function<void(const fire::Candidate&)> cb) { onSelect_ = std::move(cb); }

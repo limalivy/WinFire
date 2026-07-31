@@ -2,8 +2,7 @@
 //  NamedPipeClient.h — DLL 侧命名管道客户端（连接 fire_dictd.exe）
 //
 //  职责（详见 docs/dict-ipc-design.md §5.5 / §6.3）：
-//    - 连接后台管道；连接失败时尝试拉起 fire_dictd.exe 并重试；
-//    - 同步请求：发帧 + overlapped 读响应，带 20ms 超时（超时视为不可用）；
+//    - 连接后台管道；连接失败时拉起 fire_dictd.exe 但不在 UI 线程等待；
 //    - 异步请求：只发帧，不等响应（fire-and-forget）；
 //    - 断连检测与重连（退避），供上层降级。
 //
@@ -29,7 +28,8 @@ public:
     // 是否已连接（管道句柄有效）。
     bool IsConnected() const { return pipe_ != INVALID_HANDLE_VALUE; }
 
-    // 确保已连接：未连接则尝试连接，连不上则拉起后台进程再重试若干次。
+    // 确保已连接：未连接则尝试一次连接，连不上则拉起后台进程并立即返回 false。
+    // **不在 UI 线程上等待**后台就绪（会卡死宿主）；下次调用会自然重试。
     // 返回是否连接成功。
     bool EnsureConnected();
 

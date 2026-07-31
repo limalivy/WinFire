@@ -37,6 +37,18 @@ bool DictIpcProxy::Handshake() {
     return true;
 }
 
+bool DictIpcProxy::TryRecover() {
+    if (available_) return true;
+    // 退避：避免每键都尝试重连（每次握手需 20ms 同步等待）。后台启动通常在数百 ms 内。
+    ULONGLONG now = GetTickCount64();
+    if (lastRecoverTick_ != 0 && now - lastRecoverTick_ < kRecoverBackoffMs) {
+        return false;  // 距上次尝试太近，跳过
+    }
+    lastRecoverTick_ = now;
+    // EnsureConnected 已在 Handshake 内调用，此处直接重新握手（会重连 + 拉后台）。
+    return Handshake();
+}
+
 fire::QueryResult DictIpcProxy::GetCandidates(const std::string& query, int page) {
     QueryRequest req;
     req.query = query;

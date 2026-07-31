@@ -501,6 +501,14 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     // 仅在文件 mtime 变化时才真正重载，否则只是一次 stat，开销可忽略。
     MaybeReloadConfig();
 
+    // 查字后台可用性恢复：若 dictService_ 不可用（如开机时后台尚未启动、
+    // 或某次查询超时后 available_ 被置 false），在按键热路径上周期性尝试重连。
+    // TryRecover 自带 1s 退避；后台就绪后下一次按键即恢复中文输入，
+    // 避免「超时一次后该进程再也无法输入中文」的死锁。
+    if (dictService_ && !dictService_->IsAvailable()) {
+        dictService_->TryRecover();
+    }
+
     BYTE kb[256];
     GetKeyboardState(kb);
     UINT scan = (UINT)((lParam >> 16) & 0xFF);

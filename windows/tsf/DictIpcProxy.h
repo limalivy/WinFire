@@ -45,6 +45,11 @@ public:
                          bool enable_hanzi) override;
     bool IsAvailable() const override { return available_; }
 
+    // 可用性恢复：当 available_ 失效（连接超时/握手失败）后，由按键热路径周期性
+    // 调用，尝试重连并握手。带 1s 退避，避免每键都 CreateFile + 握手（每次握手有
+    // 20ms 同步等待）。后台就绪后下一次按键即恢复中文输入。
+    bool TryRecover() override;
+
     // 握手拿到的 config 摘要。
     char temp_en_trigger() const { return temp_en_trigger_; }
 
@@ -53,6 +58,10 @@ private:
     std::string app_id_;
     bool available_ = false;
     char temp_en_trigger_ = ';';
+
+    // 退避：记录上次尝试恢复的时刻，距上次不足 kRecoverBackoffMs 则跳过。
+    ULONGLONG lastRecoverTick_ = 0;
+    static constexpr DWORD kRecoverBackoffMs = 1000;
 
     static constexpr DWORD kSyncTimeoutMs = 20;  // 设计 §5.5：同步 20ms 超时
 };

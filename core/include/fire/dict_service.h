@@ -42,6 +42,13 @@ public:
     // ---- 状态 ----
     // 后台可用 / 本地 DB 打开成功。为 false 时引擎应降级透传。
     virtual bool IsAvailable() const = 0;
+
+    // ---- 可用性恢复 ----
+    // 当 IsAvailable()=false 时，外层可在按键热路径上周期性调用本方法尝试恢复
+    //（重连 / 重新握手）。返回是否已重新可用。
+    // 默认实现：本地实现（DictLocalImpl）无"恢复"概念，返回当前可用状态即可，
+    // 故提供非纯虚默认实现，避免改动本地实现。
+    virtual bool TryRecover() { return IsAvailable(); }
 };
 
 }  // namespace fire

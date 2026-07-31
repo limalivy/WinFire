@@ -77,12 +77,11 @@ bool NamedPipeClient::EnsureConnected() {
     if (IsConnected()) return true;
     if (TryConnect()) return true;
 
-    // 连不上：拉起后台，短暂等待其就绪后重试若干次。
+    // 连不上：拉起后台进程，但**不在此等待**（这里运行在宿主 UI 线程上，
+    // 任何 Sleep/重试都会卡住宿主，表现为开机后首次按键卡死 Chrome 等）。
+    // 立即返回 false 让上层降级透传这一次按键；后台会在数百 ms 内就绪，
+    // 下一次按键时 TryConnect 自然成功。
     LaunchBackend();
-    for (int i = 0; i < 20; ++i) {  // 最多约 1s
-        Sleep(50);
-        if (TryConnect()) return true;
-    }
     return false;
 }
 

@@ -266,7 +266,14 @@ void TsfInputClient::hide_candidates() {
 void TsfInputClient::show_input_mode_toast(const std::string& label) {
     FIRE_LOG(L"[WinFire] show_input_mode_toast: label='%hs' cand=%p\n",
              label.c_str(), (void*)candWindow_);
-    if (candWindow_) candWindow_->ShowToast(label);
+    if (!candWindow_) return;
+    // 取新鲜光标供提示定位。get_caret_rect() 内部有完整降级链：
+    //   实时光标（编辑会话内，Shift 单击切换的常见情形）
+    //   → lastValidCaret_ 缓存（本会话曾显示过候选即有值）
+    //   → {0,0,0,0}（全新会话未显示过候选，由 ComputePosition 的兜底处理）
+    // 这样避免拷贝陈旧 view_.caret 把提示钉到屏幕左上角。
+    fire::CaretRect caret = get_caret_rect();
+    candWindow_->ShowToast(label, caret);
 }
 
 }  // namespace firewin

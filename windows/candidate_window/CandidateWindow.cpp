@@ -338,6 +338,31 @@ POINT CandidateWindowController::ComputePosition(const SIZE& sz) {
     FIRE_LOG(L"[WinFire] ComputePosition: caret=(%d,%d,%dx%d) win_size=(%ld,%ld)\n",
              c.x, c.y, c.width, c.height, (long)sz.cx, (long)sz.cy);
 
+    // 无光标信息（caret 全零，如全新会话语言栏切换、未显示过候选）：
+    // 不要钉在 (0,2) 屏幕左上角，改为落在「鼠标所在显示器」工作区的
+    // x 轴居中、y 轴 2/3 位置（视觉上贴近输入区，且不遮挡顶部内容）。
+    if (c.x == 0 && c.y == 0 && c.width == 0 && c.height == 0) {
+        POINT cursor = {0, 0};
+        HMONITOR mon = nullptr;
+        if (GetCursorPos(&cursor)) {
+            mon = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        } else {
+            mon = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+        }
+        MONITORINFO mi = {sizeof(mi)};
+        if (GetMonitorInfo(mon, &mi)) {
+            RECT wa = mi.rcWork;
+            x = wa.left + ((wa.right - wa.left) - sz.cx) / 2;
+            y = wa.top + ((wa.bottom - wa.top) * 2) / 3;
+            FIRE_LOG(L"[WinFire] ComputePosition: no caret, fallback center-x 2/3-y=(%d,%d)\n", x, y);
+            FIRE_LOG_EXIT();
+            return POINT{x, y};
+        }
+        // GetMonitorInfo 也失败（极罕见）：保留 (0,2)，至少不崩。
+        FIRE_LOG_EXIT();
+        return POINT{x, y};
+    }
+
     HMONITOR mon = MonitorFromPoint(POINT{x, y}, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)};
     if (GetMonitorInfo(mon, &mi)) {
@@ -528,12 +553,20 @@ void CandidateWindowController::Hide() {
 }
 
 void CandidateWindowController::ShowToast(const std::string& label) {
+    // 旧重载：拷贝陈旧 view_.caret（无新鲜光标信息时的兜底）。
+    ShowToast(label, view_.caret);
+}
+
+void CandidateWindowController::ShowToast(const std::string& label, const fire::CaretRect& caret) {
     FIRE_LOG_ENTER();
-    FIRE_LOG(L"[WinFire] ShowToast: label='%hs'\n", label.c_str());
-    // 把中英文标签作为一个单独提示显示在候选窗位置，短暂后自动隐藏。
+    FIRE_LOG(L"[WinFire] ShowToast: label='%hs' caret=(%d,%d,%dx%d)\n",
+             label.c_str(), (int)caret.x, (int)caret.y, (int)caret.width, (int)caret.height);
+    // 把中英文标签作为一个单独提示显示，定位锚点用调用方传入的新鲜光标
+    //（而非陈旧的 view_.caret，后者在尚未显示过候选时是 {0,0,0,0}，
+    // 会把提示钉到屏幕左上角）。短暂后自动隐藏。
     fire::CandidatesView v;
     v.original_string = label;
-    v.caret = view_.caret;
+    v.caret = caret;
     Show(v);
     if (hwnd_) SetTimer(hwnd_, kToastTimerId, 800, nullptr);  // 800ms 后自动隐藏
     FIRE_LOG_EXIT();
