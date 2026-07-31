@@ -58,6 +58,11 @@ private:
     ITfCompositionSink* compositionSink_ = nullptr;  // 组字终止回调（由 TextService 注入，不持有强引用）
     CandidateWindowController* candWindow_ = nullptr;
 
+    // 上一次有效光标坐标缓存。顶字自动上屏瞬间，组字区/选区正处于过渡态，
+    // GetTextExt 可能失败或返回 {0,0,0,0}，导致候选窗定位回退到屏幕左上角。
+    // 此时回退到此缓存值，保持候选窗在原位置附近刷新。
+    fire::CaretRect lastValidCaret_;
+
     // 在组字区写入文本（UTF-8）。空串表示清空组字区。
     void SetCompositionText(const std::wstring& text);
     // 结束组字并把文本落地到宿主

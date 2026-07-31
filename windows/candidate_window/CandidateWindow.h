@@ -11,6 +11,7 @@
 
 #include <windows.h>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,7 @@
 #include "fire/candidate.h"
 #include "fire/input_client.h"  // CandidatesView / CaretRect
 
-namespace Gdiplus { class Graphics; }
+namespace Gdiplus { class Graphics; class Font; class FontFamily; }
 
 namespace firewin {
 
@@ -51,8 +52,18 @@ private:
     std::vector<RECT> candidateRects_;  // 命中测试用
     RECT menuRect_ = {0, 0, 0, 0};      // ⚙ 菜单图标命中区域
     bool visible_ = false;
-    bool darkMode_ = false;             // 当前渲染使用的深色模式（每次 Show 时刷新一次）
+    bool darkMode_ = false;             // 主题未适配深色模式，固定 false（用 light 配色）
     POINT lastPos_ = {0, 0};            // 上次窗口左上角（UpdateLayeredWindow 需要）
+
+    // Font 缓存：Measure + PaintToGraphics 共用，避免每次候选刷新重建 4 个 GDI+ 对象。
+    // 仅在 (font_name, font_size, dpi) 变化时重建。
+    std::unique_ptr<Gdiplus::FontFamily> cachedFontFamily_;
+    std::unique_ptr<Gdiplus::Font> cachedFont_;
+    std::string cachedFontName_;        // 已映射后的物理字体名（"system"→"Microsoft YaHei"）
+    float cachedFontSize_ = 0;
+    float cachedDpi_ = 0;
+    // 按 dpi 取缓存的 Font（font_name/size 取自当前 theme）。失效则重建。
+    Gdiplus::Font* GetCachedFont(float dpi);
 
     std::function<void(const fire::Candidate&)> onSelect_;
     std::function<void(int)> onPage_;
@@ -67,8 +78,6 @@ private:
     POINT ComputePosition(const SIZE& sz);  // 依据 caret 计算窗口左上角
     int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中，-2 命中菜单图标
     void LaunchConfigTool();          // 启动 fire_config.exe
-
-    static bool IsDarkMode();
 
     // 获取当前窗口所在显示器的 DPI 缩放因子（1.0 = 96 DPI）
     // 用于在高 DPI 显示器（4K/Retina）上等比放大字体与间距。

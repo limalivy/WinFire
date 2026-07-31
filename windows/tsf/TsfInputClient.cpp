@@ -173,13 +173,19 @@ fire::CaretRect TsfInputClient::get_caret_rect() {
         BOOL clipped = FALSE;
         HRESULT hr = pView->GetTextExt(session_.editCookie, pRange, &r, &clipped);
         FIRE_LOG_HR(hr, L"GetTextExt");
-        if (SUCCEEDED(hr)) {
+        if (SUCCEEDED(hr) && !(r.left == 0 && r.top == 0 && r.right == 0 && r.bottom == 0)) {
             rc.x = r.left;
             rc.y = r.top;
             rc.width = r.right - r.left;
             rc.height = r.bottom - r.top;
+            lastValidCaret_ = rc;  // 缓存有效坐标，供后续回退
             FIRE_LOG(L"[WinFire] get_caret_rect: rect=(%d,%d,%dx%d) clipped=%d\n",
                      rc.x, rc.y, rc.width, rc.height, clipped ? 1 : 0);
+        } else {
+            // GetTextExt 失败或返回全零矩形（顶字自动上屏瞬间组字区过渡态常见）：
+            // 回退到上次有效坐标，避免候选窗定位到屏幕左上角 (0,0)。
+            FIRE_LOG(L"[WinFire] get_caret_rect: GetTextExt unavailable, fallback to last valid\n");
+            rc = lastValidCaret_;
         }
         pRange->Release();
     }

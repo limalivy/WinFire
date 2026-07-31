@@ -295,6 +295,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   `fire_dictd.exe` 写库（`RecordStat` 异步 fire-and-forget）。
 - 按应用输入模式：`OnSetFocus(ITfDocumentMgr*)` 按 `bundle_id()`（宿主 exe 名）做 restore/save。
 - 全量配置：`LoadConfigFromDisk` 调用 `firecfg::ConfigStore::Load` 读取 `config.json`。
+- **配置热加载（带节流）**：`OnKeyDown` 入口调用 `MaybeReloadConfig`，但**每分钟最多做一次**
+  `GetFileAttributesExW`（mtime 检查），mtime 变化才真正 `LoadConfigFromDisk`。`InputEngine`/
+  `PunctuationConverter` 持 `config_` 引用，就地更新即可见，无需重建。权衡：改完配置最多等 60s
+  （下次打字）生效，换取快速打字时不每键 stat。
 - **SEH 崩溃保护**：`ActivateEx` 通过 `InitEngineSafe()`（`__try/__except` 包裹 `InitEngine`）
   防止引擎初始化崩溃导致宿主进程（QQ/Word/Chrome…）整体挂掉；崩溃时记录日志并返回 `E_FAIL`，
   宿主进程会优雅降级为不加载输入法。
@@ -306,8 +310,13 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 ### 6.2 候选窗（Win32 + GDI+ 自绘，windows/candidate_window/）
 - 无焦点浮窗：`WS_POPUP`，扩展样式 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，
   `WM_MOUSEACTIVATE` 返回 `MA_NOACTIVATE`。
-- GDI+ 绘制组字区、候选列表（横/竖可切换）、序号、编码、翻页指示；主题色取自 `ThemeConfig`。
+- GDI+ 绘制组字区、候选列表（横/竖可切换）、序号、编码、翻页指示；配色取自 `ThemeConfig`。
+  主题**未适配深色模式**（`ThemeConfig.light`/`dark` 默认值相同，`ConfigStore` 不解析主题字段），
+  故 `darkMode_` 固定 `false`、恒用浅色配色，不读注册表主题。
 - 定位：根据 `CaretRect` 放在光标下方，越界时翻转到上方/贴边。
+- **Font 缓存**：`Measure` 与 `PaintToGraphics` 经 `GetCachedFont(dpi)` 共用 `Font`/`FontFamily`，
+  仅在 `(font_name, font_size, dpi)` 变化时重建，避免每次候选刷新构造 GDI+ 字体对象（字体加载较重）。
+  `Destroy()` 在 `GdiplusShutdown` 前 reset 缓存，保证释放顺序正确。
 - **DPI 自适应**：`Measure` 阶段调用 `GetDpiForWindow` 取系统缩放，所有尺寸/字号按 DPI scale 倍率计算，
   避免 HiDPI 屏下候选窗过小。
 - **候选个数可配置**：3-9，由 `config.candidate_count` 控制。

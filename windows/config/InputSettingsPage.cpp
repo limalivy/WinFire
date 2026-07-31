@@ -70,6 +70,25 @@ void CInputSettingsPage::OnInitDialog() {
     firecfg::CbAdd(hwnd, IDC_CMB_TOGGLE_KEY, L"Win");
     firecfg::CbAdd(hwnd, IDC_CMB_TOGGLE_KEY, L"Alt");
     firecfg::CbSetSel(hwnd, IDC_CMB_TOGGLE_KEY, m_toggleKey);
+
+    // 顶字提示初始可见性（编码方案非纯五笔时显示）
+    UpdateDingHintVisibility();
+}
+
+void CInputSettingsPage::OnCommand(WPARAM wParam, LPARAM lParam) {
+    // 编码方案下拉变化时，实时刷新顶字提示可见性
+    if (LOWORD(wParam) == IDC_CMB_CODE_MODE && HIWORD(wParam) == CBN_SELCHANGE) {
+        UpdateDingHintVisibility();
+    }
+}
+
+void CInputSettingsPage::UpdateDingHintVisibility() {
+    // 纯五笔 = index 0；其它方案（纯拼音 / 混输）下顶字不生效，显示提示。
+    int sel = firecfg::CbGetSel(hwnd, IDC_CMB_CODE_MODE);
+    HWND hint = GetDlgItem(hwnd, IDC_STATIC_DING_HINT);
+    if (hint) {
+        ShowWindow(hint, sel == 0 ? SW_HIDE : SW_SHOW);
+    }
 }
 
 bool CInputSettingsPage::OnApply() {

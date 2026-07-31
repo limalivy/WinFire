@@ -72,19 +72,6 @@ CandidateWindowController::~CandidateWindowController() {
     Destroy();
 }
 
-bool CandidateWindowController::IsDarkMode() {
-    // 读取系统浅色/深色主题（AppsUseLightTheme=0 表示深色）
-    HKEY hKey;
-    DWORD value = 1, size = sizeof(value);
-    if (RegOpenKeyExW(HKEY_CURRENT_USER,
-                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        RegQueryValueExW(hKey, L"AppsUseLightTheme", nullptr, nullptr, (LPBYTE)&value, &size);
-        RegCloseKey(hKey);
-    }
-    return value == 0;
-}
-
 float CandidateWindowController::GetDpiScale() const {
     // GetDpiForWindow 需 Windows 10 1607+。动态绑定避免在老系统上加载失败。
     // DPI=96 时缩放因子为 1.0；150% 缩放 DPI=144，缩放因子 1.5；200% 缩放 DPI=192，缩放因子 2.0。
@@ -148,6 +135,10 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
 
 void CandidateWindowController::Destroy() {
     FIRE_LOG_ENTER();
+    // 必须在 GdiplusShutdown 之前释放所有 GDI+ 对象，否则后续成员析构
+    //（unique_ptr 自动释放 cachedFont_/cachedFontFamily_）会在 GDI+ 已关闭后操作 GDI+ 对象。
+    cachedFont_.reset();
+    cachedFontFamily_.reset();
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
     if (gdiplusToken_) { GdiplusShutdown(gdiplusToken_); gdiplusToken_ = 0; }
     FIRE_LOG_EXIT();
@@ -212,6 +203,26 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
+Gdiplus::Font* CandidateWindowController::GetCachedFont(float dpi) {
+    const auto& ap = config_.theme.appearance(darkMode_);
+    // "system" → 物理字体名（与原内联构造保持一致）
+    std::string fontName = (ap.font_name == "system") ? "Microsoft YaHei" : ap.font_name;
+    float fontSize = ap.font_size * dpi;
+    // 命中缓存：font_name / size / dpi 均未变则直接复用
+    if (cachedFont_ && cachedFontName_ == fontName &&
+        cachedFontSize_ == fontSize && cachedDpi_ == dpi) {
+        return cachedFont_.get();
+    }
+    // 失效：重建 FontFamily + Font
+    cachedFontFamily_ = std::make_unique<Gdiplus::FontFamily>(U8ToU16(fontName).c_str());
+    cachedFont_ = std::make_unique<Gdiplus::Font>(cachedFontFamily_.get(), fontSize,
+                                                  Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    cachedFontName_ = fontName;
+    cachedFontSize_ = fontSize;
+    cachedDpi_ = dpi;
+    return cachedFont_.get();
+}
+
 SIZE CandidateWindowController::Measure() {
     FIRE_LOG_ENTER();
     // 用一个临时 DC + GDI+ 测量文本尺寸。此处给出布局公式，具体像素以实际字体度量为准。
@@ -227,12 +238,11 @@ SIZE CandidateWindowController::Measure() {
         return sz;
     }
     Graphics g(hdc);
-    FontFamily ff(U8ToU16(ap.font_name == "system" ? "Microsoft YaHei" : ap.font_name).c_str());
-    Font font(&ff, ap.font_size * dpi, FontStyleRegular, UnitPixel);
+    Font* font = GetCachedFont(dpi);  // 跨 Show 缓存，避免每键重建
 
     auto measure = [&](const std::wstring& t) -> SizeF {
         RectF box;
-        g.MeasureString(t.c_str(), (int)t.size(), &font, PointF(0, 0), &box);
+        g.MeasureString(t.c_str(), (int)t.size(), font, PointF(0, 0), &box);
         return SizeF(box.Width, box.Height);
     };
 
@@ -369,13 +379,12 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
         g.FillPath(&bg, &path);
     }
 
-    FontFamily ff(U8ToU16(ap.font_name == "system" ? "Microsoft YaHei" : ap.font_name).c_str());
-    Font font(&ff, ap.font_size * dpi, FontStyleRegular, UnitPixel);
+    Font* font = GetCachedFont(dpi);  // 跨 Show 缓存，避免每键重建
 
     // 组字区（缓存区）
     SolidBrush originBrush(ToColor(ap.origin_code_color));
     std::wstring origin = U8ToU16(view_.original_string);
-    g.DrawString(origin.c_str(), (int)origin.size(), &font,
+    g.DrawString(origin.c_str(), (int)origin.size(), font,
                  PointF((REAL)(ap.window_padding_left * dpi),
                         (REAL)(ap.window_padding_top * dpi)),
                  &originBrush);
@@ -401,19 +410,19 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
         }
         // 按顺序绘制：序号 → 文本 → 编码提示，各段用对应颜色
         RectF idxBox, txtBox;
-        g.MeasureString(index.c_str(), (int)index.size(), &font, PointF(0, 0), &idxBox);
-        g.MeasureString(txt.c_str(), (int)txt.size(), &font, PointF(0, 0), &txtBox);
+        g.MeasureString(index.c_str(), (int)index.size(), font, PointF(0, 0), &idxBox);
+        g.MeasureString(txt.c_str(), (int)txt.size(), font, PointF(0, 0), &txtBox);
         float curX = (REAL)r.left;
-        g.DrawString(index.c_str(), (int)index.size(), &font,
+        g.DrawString(index.c_str(), (int)index.size(), font,
                      PointF(curX, (REAL)r.top),
                      selected ? &selIdxBrush : &idxBrush);
         curX += idxBox.Width;
-        g.DrawString(txt.c_str(), (int)txt.size(), &font,
+        g.DrawString(txt.c_str(), (int)txt.size(), font,
                      PointF(curX, (REAL)r.top),
                      selected ? &selTextBrush : &textBrush);
         curX += txtBox.Width;
         if (!codeHint.empty()) {
-            g.DrawString(codeHint.c_str(), (int)codeHint.size(), &font,
+            g.DrawString(codeHint.c_str(), (int)codeHint.size(), font,
                          PointF(curX, (REAL)r.top),
                          selected ? &selCodeBrush : &codeBrush);
         }
@@ -423,7 +432,7 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     if (IsReverseLookup(config_, view_.original_string)) {
         const wchar_t kMenuIcon[] = L"\u2699";
         SolidBrush menuBrush(ToColor(ap.candidate_index_color));
-        g.DrawString(kMenuIcon, 1, &font,
+        g.DrawString(kMenuIcon, 1, font,
                      PointF((REAL)menuRect_.left, (REAL)menuRect_.top),
                      &menuBrush);
     }
@@ -496,7 +505,7 @@ void CandidateWindowController::Show(const fire::CandidatesView& view) {
         FIRE_LOG_EXIT();
         return;
     }
-    darkMode_ = IsDarkMode();  // 每次显示刷新一次，绘制期间使用同一值
+    darkMode_ = false;  // 主题未适配深色模式，固定用 light 配色
     SIZE sz = Measure();
     POINT pos = ComputePosition(sz);
     SetWindowPos(hwnd_, HWND_TOPMOST, pos.x, pos.y, sz.cx, sz.cy,

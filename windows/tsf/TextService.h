@@ -114,6 +114,9 @@ private:
     // config.json 上次加载时的最后写入时间（FILETIME），供 MaybeReloadConfig 比较。
     // 初始为 0：首次 OnKeyDown 必然触发一次 Load（与 InitEngine 里的首次 Load 幂等）。
     FILETIME lastConfigMtime_ = {};
+    // 上次执行 config 检查（GetFileAttributesExW）的时刻（ms，GetTickCount64）。
+    // 节流：两次检查间隔至少 kConfigCheckIntervalMs，避免快速打字时每键一次 stat IO。
+    ULONGLONG lastConfigCheckTick_ = 0;
 
     void InitEngine();
     void LoadConfigFromDisk();  // 读取 config.json

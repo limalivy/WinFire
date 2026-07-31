@@ -19,6 +19,7 @@
 #define IDC_CHK_WUBI_CODE_TIP    2109
 #define IDC_CHK_WUBI_AUTO_COMMIT 2110
 #define IDC_CMB_TOGGLE_KEY       2111
+#define IDC_STATIC_DING_HINT     2112  // 顶字提示：仅在纯五笔下生效
 
 class CInputSettingsPage : public PageBase {
 public:
@@ -39,7 +40,10 @@ public:
 protected:
     void OnInitDialog() override;
     bool OnApply() override;
+    void OnCommand(WPARAM wParam, LPARAM lParam) override;
     void SyncToConfig();
+    // 顶字提示可见性：仅当编码方案不是「纯五笔」(index 0) 时显示提示。
+    void UpdateDingHintVisibility();
 };
 
 // 工厂：创建属性页句柄（供 PropertySheet 注册）
