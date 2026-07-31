@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WinFire / 微火五笔输入法 图标母版 —— 方案A 对称几何火
+  viewBox 128x128，所有坐标以此为基准。
+  渲染脚本根据此文件中定义的形状、色停、参数重绘为各尺寸 PNG / ICO。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <!-- 底板：红→橙→黄 对角渐变 -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#E53935"/>
+      <stop offset="55%" stop-color="#FB8C00"/>
+      <stop offset="100%" stop-color="#FDD835"/>
+    </linearGradient>
+    <!-- 字形：黄→浅黄 垂直渐变（底部深，顶部亮） -->
+    <linearGradient id="glyphGrad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%"   stop-color="#FFEB3B"/>
+      <stop offset="100%" stop-color="#FFF9C4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形底板  x=8 y=8 w=112 h=112 rx=28 （≈ 128 的 22% 圆角半径） -->
+  <rect x="8" y="8" width="112" height="112" rx="28" ry="28"
+        fill="url(#bgGrad)"/>
+
+  <!-- 外焰：对称贝塞尔火焰轮廓 -->
+  <path fill="url(#glyphGrad)"
+        d="M64 28
+           C 56 40, 44 50, 44 66
+           C 44 74, 48 80, 48 80
+           C 40 78, 32 72, 32 62
+           C 32 56, 34 52, 34 52
+           C 24 66, 22 82, 32 92
+           C 42 102, 58 102, 64 96
+           C 70 102, 86 102, 96 92
+           C 106 82, 104 66, 94 52
+           C 94 52, 96 56, 96 62
+           C 96 72, 88 78, 80 80
+           C 80 80, 84 74, 84 66
+           C 84 50, 72 40, 64 28 Z"/>
+
+  <!-- 内焰芯：橙色半透明椭圆  cx=64 cy=82 rx=10 ry=14 -->
+  <ellipse cx="64" cy="82" rx="10" ry="14"
+           fill="#FF6F00" opacity="0.85"/>
+</svg>

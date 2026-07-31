@@ -1,0 +1,20 @@
+//
+//  fire_tsf.rc — fire_tsf.dll 资源脚本
+//
+//  目前只嵌入输入法主图标 winfire.ico（含 16/24/32/48/256 多尺寸帧）。
+//  该资源被两处使用：
+//    1. TSF 注册：DllRegisterServer 里 AddLanguageProfile 把本 DLL 路径作为
+//       IconFile、IconIndex=0，系统据此从 DLL 取 index 0 的 ICON 资源显示在
+//       输入法列表 / 设置面板；
+//    2. 语言栏按钮：CFireLangBarButton::GetIcon() 用 LoadIconW(hInst, ...) 加载，
+//       作为任务栏托盘 / 输入指示器的运行时图标。
+//
+//  文件首行声明 UTF-8（与 ConfigApp.rc 一致），避免 rc.exe 用系统 GBK 误解析中文。
+#pragma code_page(65001)
+#include <winres.h>
+#include "Resource.h"
+
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+
+// 输入法主图标。DLL 内首个 ICON 资源 → 注册表 IconIndex = 0。
+IDI_FIRE_TSF_ICON ICON "..\\..\\resources\\icons\\winfire.ico"

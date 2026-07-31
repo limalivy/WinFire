@@ -2,6 +2,7 @@
 //  ConfigApp.cpp — 纯 Win32 应用入口 + 属性表 + 通用对话框过程
 //
 #include "ConfigApp.h"
+#include "Resource.h"       // 主图标 IDI_WINFIRE 等
 #include "UiBase.h"
 #include "InputSettingsPage.h"
 #include "PunctuationPage.h"
@@ -84,10 +85,12 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     psh.dwSize = sizeof(psh);
     // 用 phpage 数组（已 CreatePropertySheetPage 创建的句柄），不能带 PSH_PROPSHEETPAGE
     // （该标志表示用 ppsp 结构数组，会让 PropertySheet 把 phpage 当指针解引用导致访问违例）
-    psh.dwFlags = PSH_NOAPPLYNOW;  // 隐藏"应用"按钮（用 OK 统一保存）
+    // PSH_USEICONID：从资源载入 pszIcon 指定的图标，用于标题栏 / Alt+Tab / 任务栏
+    psh.dwFlags = PSH_NOAPPLYNOW | PSH_USEICONID;
     psh.hInstance = hInstance;
     psh.hwndParent = nullptr;
     psh.pszCaption = L"微火五笔输入法 设置";
+    psh.pszIcon = MAKEINTRESOURCEW(IDI_WINFIRE);
     psh.nPages = 5;
     psh.nStartPage = 0;
     psh.phpage = pages;

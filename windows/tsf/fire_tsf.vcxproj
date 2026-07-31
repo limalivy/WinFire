@@ -85,6 +85,12 @@
     <ClInclude Include="DictIpcProxy.h" />
     <ClInclude Include="NamedPipeClient.h" />
     <ClInclude Include="..\common\IpcShared.h" />
+    <ClInclude Include="Resource.h" />
+  </ItemGroup>
+  <!-- 资源脚本：嵌入 winfire.ico，供 TSF 注册表 IconFile/IconIndex 与
+       语言栏按钮 GetIcon() 使用（见 fire_tsf.rc 说明）。 -->
+  <ItemGroup>
+    <ResourceCompile Include="fire_tsf.rc" />
   </ItemGroup>
   <!-- ===================================================================== -->
   <!-- 版本号单一来源：从仓库根目录的 VERSION 文件（形如 0.1.0）生成 Version.h。 -->

@@ -4,6 +4,8 @@
 #include "LangBarButton.h"
 #include "DebugLog.h"
 #include "TextService.h"
+#include "Resource.h"
+#include "Globals.h"  // g_hInst（DLL 实例句柄）
 
 #include <olectl.h>
 
@@ -109,7 +111,18 @@ STDMETHODIMP CFireLangBarButton::OnMenuSelect(UINT wID) {
 
 STDMETHODIMP CFireLangBarButton::GetIcon(HICON* phIcon) {
     if (!phIcon) return E_INVALIDARG;
-    *phIcon = nullptr;  // 无自定义图标，使用文本
+    // 从本 DLL 资源段加载主图标（IDI_FIRE_TSF_ICON = index 0）。
+    // 用 LoadImage + LR_DEFAULTSIZE：按系统 SM_CXICON/SM_CYICON 取尺寸，
+    // 高 DPI 下自动放大（LoadIcon 固定 32x32，托盘会糊）。
+    // 调用方（TSF 框架）负责 DestroyIcon。
+    HICON hIcon = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_FIRE_TSF_ICON),
+                                    IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+    if (!hIcon) {
+        FIRE_LOG(L"[WinFire] LangBar GetIcon: LoadImage FAILED err=%lu\n", GetLastError());
+        *phIcon = nullptr;
+        return E_FAIL;
+    }
+    *phIcon = hIcon;
     return S_OK;
 }
 

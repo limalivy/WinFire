@@ -1,6 +1,7 @@
 // 微火五笔 Windows 配置界面资源脚本（纯 Win32 对话框模板）
 #pragma code_page(65001)  // 声明本文件为 UTF-8 编码，避免 rc.exe 用系统 GBK 误解析中文
 #include <winres.h>       // 标准 Windows 资源常量（DS_/WS_/BS_/LVS_ 等），替代 <afxres.h>
+#include "Resource.h"     // 资源 ID（图标等）
 #include "InputSettingsPage.h"
 #include "PunctuationPage.h"
 #include "AppModePage.h"
@@ -8,6 +9,9 @@
 #include "DictPage.h"
 
 LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+
+//////////////////// 主程序图标（用于 EXE、PropertySheet 标题栏、Alt+Tab、任务栏） ////////////////////
+IDI_WINFIRE ICON  "..\\..\\resources\\icons\\winfire.ico"
 
 //////////////////// 输入设置页 ////////////////////
 IDD_PAGE_INPUT DIALOGEX 0, 0, 260, 240
