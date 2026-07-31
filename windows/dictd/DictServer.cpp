@@ -172,9 +172,14 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
         }
         case MsgType::RecordStat: {
             RecordStatRequest req = decode_record_stat(r);
+            // 关键：客户端（如 SearchHost.exe 等 AppContainer 沙箱进程）可能读不到用户
+            // config.json，导致传来的 enable_stats/enable_hanzi 为 false。后台是正常 IL
+            // 进程，能读真实 config.json，故用后台 config 覆盖客户端值，保证统计开关一致。
+            bool enableStats = config_.enable_statistics;
+            bool enableHanzi = config_.enable_hanzi_frequency_statistics;
             if (stats_ && stats_->is_open() && r.ok()) {
                 stats_->record_candidate(req.candidate, req.app_id, req.hanzi_parts,
-                                         req.enable_stats, req.enable_hanzi);
+                                         enableStats, enableHanzi);
             }
             return MsgType::RecordStat;  // 异步，无响应
         }
