@@ -84,6 +84,11 @@ DictServer::~DictServer() = default;
 
 bool DictServer::Init() {
     // 正常 IL 进程：复用 fire_config 的 ConfigStore 解析 config.json 与数据目录。
+    // 注意：本函数在后台线程异步执行（main.cpp），与 ServeConnection 并发，
+    // 故 dict_/stats_/config_ 的访问全程持锁（HandleRequest 读取也在同一锁内）。
+    // Init 期间 HandleRequest 会阻塞，但客户端有 20ms 超时会返回空结果，可接受
+    //（Init 期间本就无候选）。
+    std::lock_guard<std::mutex> lock(mu_);
     firecfg::ConfigStore::Load(config_);
 
     std::wstring dir = firecfg::GetConfigDir();
@@ -100,7 +105,6 @@ bool DictServer::Init() {
     dict_ = std::make_unique<fire::DictManager>(config_);
     // 统计库始终打开（后台负责所有宿主的写入；具体是否写由请求内的开关决定）。
     stats_ = std::make_unique<fire::Statistics>(config_.stats_db_path);
-
     return dict_ && dict_->is_open();
 }
 

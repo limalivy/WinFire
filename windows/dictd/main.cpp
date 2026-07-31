@@ -36,7 +36,11 @@ int wmain() {
     }
 
     firewin::DictServer server;
-    server.Init();  // 词库/统计库打开；即便词库未打开也继续（客户端会据 ready 降级）
+    // 异步初始化词库：冷启动时打开 sqlite（磁盘冷缓存）可能 >1s，
+    // 同步 Init 会让管道创建延后，导致首个客户端 EnsureConnected 1s 重试窗口超时。
+    // 改为后台 Init，主线程立即创建管道 accept；HandleRequest 中 if(dict_) 保护
+    // 未就绪时返回空结果，客户端 available_=true 不降级，几秒后词库就绪即可出候选。
+    std::thread initThread([&server]() { server.Init(); });
 
     firewin::NamedPipeServer pipeServer;
     const std::wstring pipeName = firewin::MakeDictPipeName();
@@ -70,6 +74,9 @@ int wmain() {
         // 创建管道失败等异常：短暂退避后重试，避免忙循环。
         Sleep(1000);
     }
+
+    // 退出前确保 Init 线程不再访问 server（避免析构 UAF）。
+    initThread.join();
 
     if (mutex) {
         ReleaseMutex(mutex);
