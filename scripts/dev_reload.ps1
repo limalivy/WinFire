@@ -241,13 +241,6 @@ $regPath = "HKLM:\Software\WinFire"
 New-Item -Path $regPath -Force | Out-Null
 New-ItemProperty -Path $regPath -Name "UserDataDir" -Value $ConfigDir -PropertyType String -Force
 
-# fire_dictd.exe 开机自启（HKCU Run）：AppContainer 沙箱进程无权 CreateProcess 拉起后台，
-# 需用户登录时自动启动 fire_dictd.exe，确保沙箱进程首次输入即可经 IPC 查库。
-$runPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-New-Item -Path $runPath -Force | Out-Null
-New-ItemProperty -Path $runPath -Name "WinFireDictd" -Value "`"$DictdExeDst`"" -PropertyType String -Force
-Write-Host "  [OK] fire_dictd.exe auto-start registered" -ForegroundColor Green
-
 # ---- 5. Register ----
 Step "Registering TSF..."
 $result = & regsvr32 /s $TsfDllDst 2>&1

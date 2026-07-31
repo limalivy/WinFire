@@ -174,14 +174,6 @@ Root: HKLM; Subkey: "Software\WinFire"; ValueType: string; \
   ValueName: "UserDataDir"; ValueData: "{userappdata}\WinFire"; \
   Flags: uninsdeletekey
 
-; fire_dictd.exe 开机自启（HKCU Run）：AppContainer 沙箱进程（SearchHost.exe 等）
-; 无权 CreateProcess 拉起后台，故需用户登录时自动启动 fire_dictd.exe，确保沙箱进程
-; 首次输入即可经 IPC 查库。fire_dictd.exe 自身有空闲超时退出（约 10 分钟无连接），
-; 但只要有 TSF 宿主在用就会保活。
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "WinFireDictd"; ValueData: """{app}\fire_dictd.exe"""; \
-  Flags: uninsdeletevalue
-
 ; ----------------------------------------------------------------------------
 ; 卸载完成后询问是否删除用户数据（config / 词库 / 统计）
 ; ----------------------------------------------------------------------------
