@@ -50,15 +50,19 @@ static std::string GetShownCode(const fire::Candidate& cand, const std::string& 
     return std::string();
 }
 
-// 是否应当显示编码提示：
-//   - wubi_code_tip 开关开启（用户设置），或
-//   - 反查模式（z_key_query 开启且 original 以 ` 开头）强制显示，不受开关控制。
+// 是否处于反查模式（z_key_query 开启且 original 以 ` 开头）。
 // 与 InputEngine::is_reverse_lookup_mode 判定一致（反查仅发生在 ZhHans 模式下，
 // 候选窗只在 ZhHans 下收到此类视图，故无需再判 input_mode）。
+static bool IsReverseLookup(const fire::Config& config, const std::string& original) {
+    return config.z_key_query &&
+           !original.empty() && original[0] == '`';
+}
+
+// 是否应当显示编码提示：
+//   - wubi_code_tip 开关开启（用户设置），或
+//   - 反查模式强制显示，不受开关控制。
 static bool ShouldShowCode(const fire::Config& config, const std::string& original) {
-    bool reverseLookup = config.z_key_query &&
-                         !original.empty() && original[0] == '`';
-    return config.wubi_code_tip || reverseLookup;
+    return config.wubi_code_tip || IsReverseLookup(config, original);
 }
 
 CandidateWindowController::CandidateWindowController(const fire::Config& config)
@@ -280,8 +284,9 @@ SIZE CandidateWindowController::Measure() {
         candidateRects_.push_back(r);
     }
 
-    // 菜单图标 ⚙ 追加在候选列表末尾（横向：右侧；竖向：下方独占一行）
-    {
+    // 菜单图标 ⚙ 仅在反查模式时追加在候选列表末尾（横向：右侧；竖向：下方独占一行），
+    // 其余模式不显示（menuRect_ 留零矩形，HitTest 也不会命中）。
+    if (IsReverseLookup(config_, view_.original_string)) {
         const wchar_t kMenuIcon[] = L"\u2699";
         SizeF menuSz = measure(kMenuIcon);
         RECT r;
@@ -299,6 +304,8 @@ SIZE CandidateWindowController::Measure() {
             totalH = y + menuSz.Height;
         }
         menuRect_ = r;
+    } else {
+        menuRect_ = {0, 0, 0, 0};
     }
 
     maxW = (std::max)(maxW, rowW - padL);
@@ -412,12 +419,14 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
         }
     }
 
-    // 菜单图标 ⚙（用序号同色，低调显示）
-    const wchar_t kMenuIcon[] = L"\u2699";
-    SolidBrush menuBrush(ToColor(ap.candidate_index_color));
-    g.DrawString(kMenuIcon, 1, &font,
-                 PointF((REAL)menuRect_.left, (REAL)menuRect_.top),
-                 &menuBrush);
+    // 菜单图标 ⚙ 仅在反查模式下绘制（Measure 中非反查模式已留零矩形）
+    if (IsReverseLookup(config_, view_.original_string)) {
+        const wchar_t kMenuIcon[] = L"\u2699";
+        SolidBrush menuBrush(ToColor(ap.candidate_index_color));
+        g.DrawString(kMenuIcon, 1, &font,
+                     PointF((REAL)menuRect_.left, (REAL)menuRect_.top),
+                     &menuBrush);
+    }
 }
 
 void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
@@ -528,8 +537,9 @@ int CandidateWindowController::HitTest(POINT pt) const {
             return (int)i;
         }
     }
-    // 菜单图标命中
-    if (pt.x >= menuRect_.left && pt.x <= menuRect_.right &&
+    // 菜单图标命中（仅反查模式下 menuRect_ 非空；零矩形时跳过，避免误命中左上角）
+    if (menuRect_.right > menuRect_.left && menuRect_.bottom > menuRect_.top &&
+        pt.x >= menuRect_.left && pt.x <= menuRect_.right &&
         pt.y >= menuRect_.top && pt.y <= menuRect_.bottom) {
         return -2;
     }
