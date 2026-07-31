@@ -58,6 +58,8 @@ winFire/
 │   └── test_ipc_protocol.cpp   # IPC 协议编解码往返测试
 ├── windows/                    # Windows 平台层
 │   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient）
+│   │   ├── fire_tsf.rc         # 资源脚本：嵌入 winfire.ico（DLL 内首个 ICON 资源，供注册表 IconIndex=0）
+│   │   └── Resource.h          # IDI_FIRE_TSF_ICON 资源 ID
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
 │   ├── config/                 # 纯 Win32 配置界面（fire_config.exe，PropertySheet + GDI）
 │   ├── dictd/                  # 后台查字进程 fire_dictd.exe（命名管道 server + DictManager+Statistics）
@@ -65,11 +67,16 @@ winFire/
 ├── installer/                  # Inno Setup 脚本与预构建资源
 │   ├── winfire.iss             # 安装包脚本
 │   └── staging/                # 预构建词库 + 默认 config.json（随包分发）
-├── scripts/                    # PowerShell 构建/安装/卸载脚本
+├── scripts/                    # PowerShell 构建/安装/卸载/维护脚本
 │   ├── build_installer.ps1     # 一键编译 + 生成 WinFire-Setup.exe
 │   ├── install.ps1             # 直接部署（不走 installer，需管理员）
-│   └── uninstall.ps1           # 反注册 + 删除程序文件（用户数据可选）
-├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）
+│   ├── uninstall.ps1           # 反注册 + 删除程序文件（用户数据可选）
+│   ├── dev_reload.ps1          # 开发热重载：编译 TSF DLL→部署为 fire_tsf_DEV.dll→刷新宿主（免重启/改版本号）
+│   ├── cleanup_now.ps1         # 紧急清理：清除本机所有残留的输入法注册（需管理员）
+│   └── fix_pending_ops.ps1     # 清理 PendingFileRenameOperations 中 WinFire 残留条目（需管理员）
+├── resources/                  # 资源
+│   ├── *.txt                   # 内置码表（86 版 / 98 版五笔 + 拼音）
+│   └── icons/                  # 图标资源（winfire.ico 含 16/24/32/48/256 帧 + svg 母版 + render 脚本）
 └── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
 ```
 
@@ -278,6 +285,12 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - 语言栏按钮（`LangBarButton.h/.cpp`，`ITfLangBarItemButton` + `ITfSource`）替代 macOS 状态栏图标：
   显示「中/英」，左键切换、菜单直选中/英；tooltip 为「微火五笔：点击切换中/英文」；
   `Activate/Deactivate` 通过 `ITfLangBarItemMgr` 注册/注销。
+- **图标资源**（`fire_tsf.rc` + `Resource.h`）：把 `resources/icons/winfire.ico` 嵌入 DLL 为
+  `IDI_FIRE_TSF_ICON`（DLL 内首个 ICON 资源）。一处嵌入两处使用：
+  - **注册表图标**：`DllRegisterServer` 的 `AddLanguageProfile` 把本 DLL 路径作为 `IconFile`、
+    `IconIndex=0`，系统据此从 DLL 取 index 0 的 ICON 资源，显示在输入法列表 / 设置面板；
+  - **运行时图标**：`CFireLangBarButton::GetIcon()` 用 `LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_FIRE_TSF_ICON), IMAGE_ICON, 0,0, LR_DEFAULTSIZE)`
+    加载，作为任务栏托盘 / 输入指示器图标（`LR_DEFAULTSIZE` 按系统 SM_CXICON 取尺寸，高 DPI 自适应）。
 - 输入统计：DLL 端不直接持 `Statistics`，上屏事件经 `IDictService` 回调→`DictIpcProxy`→IPC→
   `fire_dictd.exe` 写库（`RecordStat` 异步 fire-and-forget）。
 - 按应用输入模式：`OnSetFocus(ITfDocumentMgr*)` 按 `bundle_id()`（宿主 exe 名）做 restore/save。
@@ -299,8 +312,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   避免 HiDPI 屏下候选窗过小。
 - **候选个数可配置**：3-9，由 `config.candidate_count` 控制。
 - **翻页**：`-` / `=` 或 PageUp / PageDown，由 handler 链的 `pageKey` 段处理。
-- **⚙ 菜单图标**：候选窗右上角绘制齿轮图标，点击启动 `fire_config.exe`（通过 `ShellExecute`，
-  自动定位同目录下的配置工具），便于用户快速进入设置而无需到开始菜单查找。
+- **⚙ 菜单图标**（仅反查模式）：齿轮图标只在反查模式（`IsReverseLookup`：`z_key_query` 开启且
+  `original_string` 以 `` ` `` 开头）下绘制在候选列表末尾，点击启动 `fire_config.exe`（`ShellExecute`
+  自动定位同目录配置工具）。普通候选视图不显示，避免干扰；非反查模式下 `menuRect_` 留零矩形，
+  `HitTest` 也不命中（带非空校验防止左上角误命中）。
 
 ### 6.3 配置界面（纯 Win32 PropertySheet，windows/config/）
 - **UI 框架**：纯 Win32 `PropertySheetW` + `PROPSHEETPAGE` + 通用控件（ListView/ComboBox/Edit/Button），
@@ -309,6 +324,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - **对话框过程**：`PageDlgProc` 通用回调，通过 `PROPSHEETPAGE.lParam` 携带 `PageBase*`，
   `WM_INITDIALOG` 时存到 `DWLP_USER`，后续消息转发给派生类。
 - **资源脚本**：`ConfigApp.rc` 用 `<winres.h>` 替代 `<afxres.h>`，对话框模板与 MFC 版完全兼容。
+  含 `IDI_WINFIRE ICON "..\..\resources\icons\winfire.ico"`（ID 101），嵌入 EXE 后用于
+  PropertySheet 标题栏、Alt+Tab、任务栏图标。
 - **静态链接**：`/MT` 编译，链接 `comctl32.lib`/`comdlg32.lib`，无外部 DLL 依赖，
   EXE 体积约 2.7MB（MFC 静态版约 7.4MB，减 62.7%）。
 - **坑点**：`PROPSHEETHEADER.dwFlags` 用 `phpage` 数组（已 `CreatePropertySheetPage` 创建的句柄）时
@@ -322,6 +339,19 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
     重建词库（调用 `tablebuilder` 生成 `wb_py_dict.sqlite`）、编辑用户词库（`user-dict.txt`）。
 - 读写 `config.json`；调用 `tablebuilder` 生成 `wb_py_dict.sqlite`；编辑 `user-dict.txt`。
 - 注：主题设置、CLI 暂未实现。
+
+### 6.4 图标资源（resources/icons/）
+单一图标源 `winfire_icon.svg`（128×128 母版）经 `render_winfire_icons.py`（依赖 Pillow + numpy）
+按 SVG 参数重绘为各尺寸 PNG（16/24/32/48/256），合成为单个 `winfire.ico`（多帧）。该 ico 同时被
+`fire_tsf.dll`（§6.1，注册表 + 语言栏）和 `fire_config.exe`（§6.3，标题栏/Alt+Tab）嵌入使用，
+保证全链路图标一致。改图标流程：编辑 `winfire_icon.svg` → 跑 `render_winfire_icons.py` 重新生成
+ico/PNG → 重新构建 DLL/EXE（资源由 `.rc` 引用，编译期嵌入，无需改代码）。
+
+### 6.5 开发热重载（scripts/dev_reload.ps1）
+开发期高频迭代 TSF DLL 的辅助脚本：Build → 部署为 `%ProgramFiles%\WinFire\fire_tsf_DEV.dll`
+（带 `-DEV` 后缀，避开正式版本化文件名）→ 刷新 TSF 宿主，**无需重启 / 注销 / 改版本号**。
+需管理员权限；`-SkipBuild` 跳过编译直接用现成二进制。一并部署 `fire_config.exe` / `fire_dictd.exe` /
+`tablebuilder.exe`。这是除 §5.4 版本化侧载升级外的第二条快速验证路径，仅限本机开发使用。
 
 ## 7. 平台差异与风险
 

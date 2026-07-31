@@ -50,13 +50,14 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - 显示内容：序号、候选词、五笔编码提示（可关闭，反查时强制显示）
 - 候选个数：3-9 可配置
 - 翻页：`-` / `=` 或 PageUp / PageDown
-- ⚙ 菜单图标：点击启动配置工具
+- ⚙ 菜单图标：仅在反查模式（`` ` `` 前缀）下出现，点击启动配置工具
 
 ### 语言栏按钮
 - 显示「中 / 英」状态
 - 左键切换中英文
 - 右键菜单：直接选中 / 英模式
 - Tooltip：「微火五笔：点击切换中/英文」
+- 图标：输入法列表、设置面板、任务栏托盘统一显示微火火焰图标（嵌入 DLL/EXE 资源）
 
 ### 配置工具（fire_config.exe，纯 Win32）
 属性页式界面，包含：
@@ -110,6 +111,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 
 CMake 选项（默认 ON）：`BUILD_CORE` / `BUILD_TESTS` / `BUILD_TABLEBUILDER`。
 
+开发期高频迭代 TSF DLL 时，可用 `scripts\dev_reload.ps1`（需管理员）一键
+「编译 → 部署为 `fire_tsf_DEV.dll` → 刷新宿主」，无需重启 / 改版本号。
+
 ## 目录结构
 
 ```
@@ -120,14 +124,14 @@ winFire/
 ├── tablebuilder/               # 码表 txt -> sqlite 构建工具
 ├── tests/                      # 内核单元测试
 ├── windows/                    # Windows 平台层
-│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll）
+│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 fire_tsf.rc 图标资源）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
 │   ├── config/                 # 纯 Win32 配置界面（fire_config.exe）
 │   ├── dictd/                  # 后台查字进程（fire_dictd.exe，命名管道 server + SQLite）
 │   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具
 ├── installer/                  # Inno Setup 脚本与预构建资源
-├── scripts/                    # PowerShell 构建/安装/卸载脚本
-├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）
+├── scripts/                    # PowerShell 构建/安装/卸载脚本（dev_reload.ps1 供开发热重载）
+├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）+ icons/（图标资源）
 ├── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
 ├── CMakeLists.txt              # 仅构建内核 + 测试 + tablebuilder
 └── AGENTS.md                   # 项目详细架构说明
