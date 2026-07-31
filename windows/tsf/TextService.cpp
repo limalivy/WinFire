@@ -138,10 +138,33 @@ void CFireTextService::LoadConfigFromDisk() {
     FIRE_LOG_EXIT();
 }
 
+void CFireTextService::MaybeReloadConfig() {
+    // 用 GetFileAttributesExW 取 config.json 的最后写入时间（一次 stat，开销极低）。
+    // 与 lastConfigMtime_ 比较：变化了才重新 Load，避免每次按键都解析 JSON。
+    std::wstring path = firecfg::GetConfigJsonPath();
+    WIN32_FILE_ATTRIBUTE_DATA fad = {};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) {
+        return;  // 文件不存在或无法访问：静默跳过，保持现有配置
+    }
+    // FILETIME 比较（先比高 32 位，再比低 32 位）
+    if (fad.ftLastWriteTime.dwHighDateTime == lastConfigMtime_.dwHighDateTime &&
+        fad.ftLastWriteTime.dwLowDateTime == lastConfigMtime_.dwLowDateTime) {
+        return;  // 未变化
+    }
+    lastConfigMtime_ = fad.ftLastWriteTime;
+    FIRE_LOG(L"[WinFire] MaybeReloadConfig: config.json changed, reloading\n");
+    LoadConfigFromDisk();
+}
+
 void CFireTextService::InitEngine() {
     FIRE_LOG_ENTER();
 
     LoadConfigFromDisk();
+    // 记录首次加载时的 mtime，避免 MaybeReloadConfig 在第一次 OnKeyDown 时重复加载。
+    if (WIN32_FILE_ATTRIBUTE_DATA fad = {}; GetFileAttributesExW(
+            firecfg::GetConfigJsonPath().c_str(), GetFileExInfoStandard, &fad)) {
+        lastConfigMtime_ = fad.ftLastWriteTime;
+    }
     FIRE_LOG(L"[WinFire] InitEngine: config loaded\n");
 
     // 查字/统计服务：经 IPC 转发给 fire_dictd.exe（正常 IL 后台进程），
@@ -461,6 +484,11 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
                                          BOOL* pfEaten) {
     FIRE_LOG(L"[WinFire] OnKeyDown: wParam=0x%lX pic=%p [tid=%lu]\n",
              (unsigned long)wParam, (void*)pic, GetCurrentThreadId());
+
+    // 配置热加载：fire_config.exe 改完设置后，下一次按键即生效（无需重启宿主）。
+    // 仅在文件 mtime 变化时才真正重载，否则只是一次 stat，开销可忽略。
+    MaybeReloadConfig();
+
     BYTE kb[256];
     GetKeyboardState(kb);
     UINT scan = (UINT)((lParam >> 16) & 0xFF);
