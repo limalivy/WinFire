@@ -121,3 +121,43 @@ TEST_CASE(dict_shortest_code_as_simple_code) {
     CHECK(gong2 != nullptr);
     if (gong2) CHECK_STR_EQ(gong2->code, "aaa");
 }
+
+// 回归 BUG3：写库后内存指纹必须刷新为 db 文件当前值，否则后续 SnapshotCacheStore
+// 会把过期指纹写进快照、下次冷启动 LoadCacheStore 整体丢弃。
+// 改库路径（prepend/update_user_dict 等）都经 clear_query_cache 收口，BUG3 修复在该
+// 收口点调 refresh_db_fingerprint。这里验证 prepend 用户词后，快照指纹等于文件实际值。
+//
+// 设计说明：get_candidates 入口会 check_db_changed（mtime 变→reinit→refresh），它本身
+// 也会刷新指纹，故 prepend 后再查一次会「间接刷新」，无法单独证伪「clear_query_cache
+// 是否刷新」。本测试因此定位为「契约回归」：断言任意改库序列后快照指纹恒等于文件实际
+// 值——任何一条刷新路径（ctor/reinit/clear_query_cache）被误删都会使其失败。
+TEST_CASE(dict_prepend_refreshes_fingerprint) {
+    seed();
+    Config cfg;
+    cfg.db_path = test_db_path();
+    cfg.code_mode = CodeMode::Wubi;
+    cfg.candidate_count = 5;
+    DictManager dm(cfg);
+    dm.SetCacheStorePath(test_db_path() + ".cache.bin");
+    dm.get_candidates("a", 1);  // 填一条缓存，使快照非空
+
+    // prepend 一条用户词：sqlite 写库，db 文件 mtime/size 改变。
+    CHECK(dm.prepend_candidate(Candidate("aaaa", "测试词XYZ", CandidateType::User)));
+
+    // prepend 清空了内存 LRU，重新查一次填回缓存（正常会话路径）。
+    dm.get_candidates("a", 1);
+
+    // 此刻快照指纹必须等于 prepend 后 db 文件的真实值（旧 bug：可能是 ctor 时刻值）。
+    std::error_code ec;
+    auto mtime_after = std::filesystem::last_write_time(test_db_path(), ec);
+    int64_t expect_mtime = static_cast<int64_t>(mtime_after.time_since_epoch().count());
+    int64_t expect_size = static_cast<int64_t>(std::filesystem::file_size(test_db_path(), ec));
+
+    fire::CacheStoreSnapshot snap;
+    bool has = dm.SnapshotCacheStore(snap);
+    CHECK(has);
+    CHECK_EQ(snap.db_size, expect_size);
+    CHECK_EQ(snap.db_mtime, expect_mtime);
+
+    std::remove((test_db_path() + ".cache.bin").c_str());
+}

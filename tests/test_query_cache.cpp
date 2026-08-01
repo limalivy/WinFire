@@ -3,24 +3,25 @@
 //
 #include "fire/query_cache_store.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "fire/candidate.h"
 #include "test_util.h"
 
 namespace {
-// 取一个临时文件路径（基于当前进程 + 计数，避免冲突）。
+// 取一个临时文件路径（基于进程启动时刻 + 计数，避免多测试并行冲突）。
+// 不依赖平台 getpid/GetCurrentProcessId，保持跨平台可编译。
 std::string tmp_path(int n) {
+    static const auto boot = std::chrono::steady_clock::now().time_since_epoch().count();
     char buf[256];
-#ifdef _WIN32
-    std::snprintf(buf, sizeof(buf), "wf_qcache_test_%lu_%d.bin",
-                  (unsigned long)GetCurrentProcessId(), n);
-#else
-    std::snprintf(buf, sizeof(buf), "wf_qcache_test_%d_%d.bin", (int)getpid(), n);
-#endif
+    std::snprintf(buf, sizeof(buf), "wf_qcache_test_%lld_%d.bin",
+                  static_cast<long long>(boot), n);
     return buf;
 }
 
@@ -69,6 +70,61 @@ TEST_CASE(qcache_save_load_roundtrip) {
     CHECK_STR_EQ(loaded->entries[1].key, "fg|0|5|false");
     CHECK(loaded->entries[1].has_next == false);
 
+    fire::query_cache_store::Remove(p);
+}
+
+// 回归：entries 写入顺序（MRU→LRU，front→back）必须在 Save/Load 后保持不变。
+// DictManager::LoadCacheStore 据此把 entries[0] 当作 MRU 装回 cache_lru_，
+// 顺序一旦被反转（旧 bug：用 push_front 装），淘汰 victim 会错指最新条目。
+TEST_CASE(qcache_save_load_preserves_order) {
+    std::string p = tmp_path(7);
+    fire::query_cache_store::Remove(p);
+    fire::CacheStoreSnapshot snap;
+    snap.db_mtime = 1; snap.db_size = 1; snap.config_digest = 1u;
+    // 写入顺序即期望的 LRU 新→旧顺序：k0(MRU) ... k4(LRU)。
+    for (int i = 0; i < 5; ++i) {
+        fire::CacheStoreEntry e;
+        e.key = "k" + std::to_string(i);
+        e.has_next = false;
+        e.candidates.push_back(fire::Candidate("c", "t", fire::CandidateType::Wb));
+        snap.entries.push_back(std::move(e));
+    }
+    fire::query_cache_store::Save(p, snap);
+    auto loaded = fire::query_cache_store::Load(p);
+    CHECK(loaded.has_value());
+    CHECK_EQ(loaded->entries.size(), (size_t)5);
+    // 顺序必须与写入一致：entries[i].key == "k<i>"。
+    for (int i = 0; i < 5; ++i) {
+        std::string want = "k" + std::to_string(i);
+        CHECK_STR_EQ(loaded->entries[(size_t)i].key, want);
+    }
+    fire::query_cache_store::Remove(p);
+}
+
+// 回归：并发 Save（模拟 detached SaveCacheAsync 线程与 ~DictManager::SaveCacheStore
+// 同时写同一 path）不得互相破坏文件。落盘后 Load 必须能读出一个完整快照。
+// 旧实现两线程共用 path+".tmp" 且各自 exists+remove+rename，会留下半写/空文件。
+TEST_CASE(qcache_concurrent_save_keeps_file_valid) {
+    std::string p = tmp_path(8);
+    fire::query_cache_store::Remove(p);
+
+    auto snap1 = make_snapshot(11, 4096, 0x11111111u);
+    auto snap2 = make_snapshot(22, 8192, 0x22222222u);
+
+    std::vector<std::thread> ts;
+    ts.emplace_back([&] { fire::query_cache_store::Save(p, snap1); });
+    ts.emplace_back([&] { fire::query_cache_store::Save(p, snap2); });
+    for (auto& t : ts) t.join();
+
+    // 无论谁后写完，文件都必须是两份完整快照之一（不是半写/不是空）。
+    auto loaded = fire::query_cache_store::Load(p);
+    CHECK(loaded.has_value());
+    CHECK_EQ(loaded->entries.size(), (size_t)2);
+    bool isSnap1 = (loaded->db_mtime == 11 && loaded->db_size == 4096 &&
+                    loaded->config_digest == 0x11111111u);
+    bool isSnap2 = (loaded->db_mtime == 22 && loaded->db_size == 8192 &&
+                    loaded->config_digest == 0x22222222u);
+    CHECK(isSnap1 || isSnap2);
     fire::query_cache_store::Remove(p);
 }
 

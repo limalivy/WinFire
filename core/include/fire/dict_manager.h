@@ -115,6 +115,11 @@ private:
     // 避免输入时仍命中旧词库的 LRU 缓存导致"改了码表不生效"。
     std::filesystem::file_time_type last_db_mtime_{};
     void check_db_changed();
+    // 读取 db 文件当前 mtime/size，刷新 last_db_mtime_ 与持久化指纹
+    // (db_fingerprint_mtime_/db_fingerprint_size_)。所有改库路径（ctor/reinit/
+    // prepend/update_user_dict，经 clear_query_cache 收口）写库后必须调用，
+    // 否则 SaveCacheStore 会写入过期指纹，下次冷启动整体丢弃缓存。
+    void refresh_db_fingerprint();
 
     std::string cache_key(const std::string& query) const;
     std::string statement_sql(bool use_pagination) const;

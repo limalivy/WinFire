@@ -79,18 +79,7 @@ DictManager::DictManager(Config& config) : config_(config) {
     // 修正现有 bug：last_db_mtime_ 默认构造为 epoch，导致首次 check_db_changed 必然
     // 触发一次多余的 reinit（刚 open 的 db 被 close 再 open）。此处立即初始化为当前
     // db mtime，避免首次查询的无谓 reinit + stmt 缓存被清空。
-    if (db_ && !config_.db_path.empty()) {
-        std::error_code ec;
-        auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
-        if (!ec) {
-            last_db_mtime_ = mtime;
-            db_fingerprint_mtime_ =
-                static_cast<int64_t>(mtime.time_since_epoch().count());
-            std::error_code sec;
-            auto sz = std::filesystem::file_size(config_.db_path, sec);
-            if (!sec) db_fingerprint_size_ = static_cast<int64_t>(sz);
-        }
-    }
+    refresh_db_fingerprint();
 }
 
 DictManager::~DictManager() {
@@ -104,18 +93,7 @@ void DictManager::reinit() {
     close();  // close→clear_query_cache 会失效文件缓存（db 要变了）
     prepare_statement();
     // reinit 后更新指纹为新 db 的 mtime/size。
-    if (db_ && !config_.db_path.empty()) {
-        std::error_code ec;
-        auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
-        if (!ec) {
-            last_db_mtime_ = mtime;
-            db_fingerprint_mtime_ =
-                static_cast<int64_t>(mtime.time_since_epoch().count());
-            std::error_code sec;
-            auto sz = std::filesystem::file_size(config_.db_path, sec);
-            if (!sec) db_fingerprint_size_ = static_cast<int64_t>(sz);
-        }
-    }
+    refresh_db_fingerprint();
 }
 
 void DictManager::close() {
@@ -184,6 +162,10 @@ void DictManager::clear_query_cache() {
     if (!cache_store_path_.empty()) {
         query_cache_store::Remove(cache_store_path_);
     }
+    // 写库后（prepend/update_user_dict 等）db 文件 mtime/size 已变，必须刷新指纹，
+    // 否则后续 SnapshotCacheStore 会把过期指纹写进快照，下次冷启动整体丢弃。
+    // close() 路径此刻 db_ 已置空，refresh 内部 db_ 守卫自动跳过（库即将关闭，无需刷新）。
+    refresh_db_fingerprint();
 }
 
 void DictManager::check_db_changed() {
@@ -195,6 +177,21 @@ void DictManager::check_db_changed() {
         last_db_mtime_ = mtime;
         reinit();  // 关闭并重新打开数据库，清空 stmt 缓存与查询缓存
     }
+}
+
+void DictManager::refresh_db_fingerprint() {
+    // 读取 db 文件当前 mtime/size，同步 last_db_mtime_（check_db_changed 用）与
+    // 持久化指纹 db_fingerprint_mtime_/size_（SaveCacheStore/LoadCacheStore 用）。
+    // db_ 为空（库未打开 / close 后）时跳过：无意义且 mtime 可能误判。
+    if (!db_ || config_.db_path.empty()) return;
+    std::error_code ec;
+    auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
+    if (ec) return;
+    last_db_mtime_ = mtime;
+    db_fingerprint_mtime_ = static_cast<int64_t>(mtime.time_since_epoch().count());
+    std::error_code sec;
+    auto sz = std::filesystem::file_size(config_.db_path, sec);
+    if (!sec) db_fingerprint_size_ = static_cast<int64_t>(sz);
 }
 
 void DictManager::cache_put(const std::string& key, const CacheEntry& entry) {
@@ -652,13 +649,16 @@ void DictManager::LoadCacheStore() {
         return;
     }
     // 填充内存 LRU（受 kCacheLimit 约束）。
+    // SnapshotCacheStore 按 cache_lru_ 的 front→back（MRU→LRU）写入，即 entries[0]=MRU。
+    // 这里必须 push_back 而非 push_front：push_back 保持 [0,1,...,N] → front=entries[0]=MRU，
+    // 与原顺序一致；push_front 会反转为 [N,...,1,0] → front=LRU，使淘汰 victim 错指最新条目。
     for (auto& e : snap->entries) {
         if (cache_map_.size() >= kCacheLimit) break;
         CacheEntry ce;
         ce.candidates = std::move(e.candidates);
         ce.has_next = e.has_next;
         cache_map_[e.key] = ce;
-        cache_lru_.push_front(e.key);
+        cache_lru_.push_back(e.key);
     }
 }
 

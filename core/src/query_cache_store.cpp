@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <string>
 
 namespace fire {
@@ -182,6 +183,14 @@ std::optional<CacheStoreSnapshot> Load(const std::string& path) {
 }
 
 void Save(const std::string& path, const CacheStoreSnapshot& snap) {
+    // 进程内串行化写盘：daemon 侧 SaveCacheAsync 的 detached 子线程可能与
+    // ~DictManager 的 SaveCacheStore 并发写同一 path（两者都用 path+".tmp"）。
+    // 不加锁会互相截断 .tmp、或一个 rename 时另一个正 remove 目标，留下半写文件
+    // 或丢全部积累。文件缓存可容忍丢少量最新数据，但不可整体损坏，故此处加进程内锁。
+    // 跨进程并发（多 fire_dictd 实例）由 daemon 单实例 mutex 保证不会出现，无需文件锁。
+    static std::mutex save_mu;
+    std::lock_guard<std::mutex> lock(save_mu);
+
     std::string buf;
     buf.append("WFCQ", 4);
     put_i64(buf, snap.db_mtime);
@@ -201,10 +210,19 @@ void Save(const std::string& path, const CacheStoreSnapshot& snap) {
     std::error_code ec;
     auto tmp_p = std::filesystem::u8path(tmp);
     auto dst_p = std::filesystem::u8path(path);
-    // rename 覆盖旧文件。Windows 下 filesystem::rename 在目标存在时报错，故先 remove。
-    if (std::filesystem::exists(dst_p, ec)) std::filesystem::remove(dst_p, ec);
+    // 直接 rename 覆盖：MSVC 的 std::filesystem::rename 在 Windows 上走
+    // MoveFileExW(MOVEFILE_REPLACE_EXISTING)，目标存在即原子替换，无需先 remove。
+    // 旧实现「先 exists+remove 再 rename」会在 remove 与 rename 之间出现「目标不存在」
+    // 窗口；若此时进程被强杀，则 .tmp 与目标都不在 → 整份积累全丢。原子 rename
+    // 保证任一时刻目标要么是旧完整文件、要么是新完整文件，最坏只丢这次未落盘的写入。
     std::filesystem::rename(tmp_p, dst_p, ec);
-    if (ec) std::filesystem::remove(tmp_p, ec);
+    if (ec) {
+        // 极少数老平台 rename 覆盖失败：回退到 remove+rename，仍受本函数锁保护，
+        // 不存在与并发 Save 撞 remove 的风险（同一路径的 Save 已被串行化）。
+        if (std::filesystem::exists(dst_p, ec)) std::filesystem::remove(dst_p, ec);
+        std::filesystem::rename(tmp_p, dst_p, ec);
+        if (ec) std::filesystem::remove(tmp_p, ec);
+    }
 }
 
 void Remove(const std::string& path) {
