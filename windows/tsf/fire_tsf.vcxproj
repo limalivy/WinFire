@@ -38,7 +38,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>fire_tsf.def</ModuleDefinitionFile>
-      <AdditionalDependencies>gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>gdiplus.lib;imm32.lib;ole32.lib;oleaut32.lib;uuid.lib;advapi32.lib;shell32.lib;user32.lib;gdi32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <!-- Debug 配置：开启 FIRE_DEBUG 日志（仍用 /MT 静态链接，不依赖 Debug CRT DLL） -->

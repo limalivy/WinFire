@@ -26,6 +26,9 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <vector>
+
+#include "Version.h"  // FIRE_VER_STRING（构建期从 VERSION 生成）
 
 namespace firewin {
 
@@ -88,6 +91,57 @@ inline void FireLogV(const wchar_t* fmt, ...) {
 // 取当前线程 ID（便于排查线程问题）
 inline DWORD FireLogTid() {
     return GetCurrentThreadId();
+}
+
+// 诊断横幅：打印 WinFire 版本号 + 宿主 exe 路径与文件版本 + PID。
+// 供 DbgView 在会话开头识别运行环境（哪个宿主、哪个版本）。
+inline void FireLogDiagBanner() {
+    wchar_t exePath[MAX_PATH] = {0};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+
+    // 取宿主 exe 文件版本（FileVersion / ProductVersion）。
+    // 先查 Translation 表拿语言码，再拼 StringFileInfo 子块。
+    std::wstring fileVer = L"(n/a)";
+    std::wstring prodVer = L"(n/a)";
+    DWORD dummy = 0;
+    DWORD sz = GetFileVersionInfoSizeW(exePath, &dummy);
+    if (sz > 0) {
+        std::vector<BYTE> vi(sz);
+        if (GetFileVersionInfoW(exePath, 0, sz, vi.data())) {
+            UINT len = 0;
+            LPWCH buf = nullptr;
+            if (VerQueryValueW(vi.data(), L"\\VarFileInfo\\Translation",
+                               (LPVOID*)&buf, &len) && len >= sizeof(WORD) * 2) {
+                WORD* p = (WORD*)buf;
+                wchar_t sub[64];
+                LPWCH val = nullptr; UINT vlen = 0;
+                _snwprintf_s(sub, _countof(sub), _TRUNCATE,
+                             L"\\StringFileInfo\\%04x%04x\\FileVersion", p[0], p[1]);
+                if (VerQueryValueW(vi.data(), sub, (LPVOID*)&val, &vlen) && val && vlen > 0) {
+                    fileVer = val;
+                }
+                _snwprintf_s(sub, _countof(sub), _TRUNCATE,
+                             L"\\StringFileInfo\\%04x%04x\\ProductVersion", p[0], p[1]);
+                if (VerQueryValueW(vi.data(), sub, (LPVOID*)&val, &vlen) && val && vlen > 0) {
+                    prodVer = val;
+                }
+            }
+        }
+    }
+
+    // _CRT_WIDE 把 FIRE_VER_STRING 字面量 widening 成宽字符串嵌入格式串。
+    FireLogV(L"[WinFire] ===== DIAG BANNER ===== WinFire v" _CRT_WIDE(FIRE_VER_STRING)
+             L"  host=\"%s\"  FileVersion=%s  ProductVersion=%s  pid=%lu =====\n",
+             exePath, fileVer.c_str(), prodVer.c_str(),
+             (unsigned long)GetCurrentProcessId());
+}
+
+// 每进程只打印一次横幅（由 Activate 调用）。不同宿主进程各自独立打印。
+inline void FireLogDiagBannerOnce() {
+    static bool printed = false;
+    if (printed) return;
+    printed = true;
+    FireLogDiagBanner();
 }
 
 #endif // FIRE_DEBUG

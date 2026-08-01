@@ -169,8 +169,31 @@ Get-ChildItem -Path $InstallDir -Filter "fire_tsf_0.*.dll" -ErrorAction Silently
 
 Copy-Item $ConfigExeSrc $ConfigExeDst -Force -ErrorAction SilentlyContinue
 Copy-Item $TablebuilderSrc $TablebuilderDst -Force
-Copy-Item $DictdExeSrc $DictdExeDst -Force -ErrorAction SilentlyContinue
-Write-Host "  [OK] fire_config.exe + tablebuilder.exe + fire_dictd.exe" -ForegroundColor Green
+
+# fire_dictd.exe: a still-loaded TSF host (Word/Chrome/explorer, not killed in
+# step 2) may have respawned it via CreateProcessW since the kill, and Windows
+# holds an image lock on a running EXE. Re-kill + retry the copy so we don't
+# silently ship a stale binary (the old -ErrorAction SilentlyContinue swallowed
+# this failure).
+$dictdDeployed = $false
+for ($i = 0; $i -lt 10; $i++) {
+    Get-Process -Name "fire_dictd" -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+    try {
+        Copy-Item $DictdExeSrc $DictdExeDst -Force -ErrorAction Stop
+        $dictdDeployed = $true
+        break
+    } catch {
+        Start-Sleep -Milliseconds 300
+    }
+}
+if ($dictdDeployed) {
+    Write-Host "  [OK] fire_config.exe + tablebuilder.exe + fire_dictd.exe" -ForegroundColor Green
+} else {
+    Write-Host "  [WARN] fire_dictd.exe copy locked after retries; keeping existing" -ForegroundColor Yellow
+    Write-Host "         (other tools deployed OK)" -ForegroundColor Yellow
+}
 
 # 授予 AppContainer（ALL APPLICATION PACKAGES，SID S-1-15-2-1）读取+执行权限，
 # 使 SearchHost.exe / UWP 等沙箱进程能加载 DLL 并读 tables（与安装包一致）。
@@ -254,8 +277,25 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # 拉起后台查字进程（正常 IL），供沙箱进程经 IPC 查库。
-Start-Process -FilePath $DictdExeDst -WindowStyle Hidden
-Write-Host "  [OK] fire_dictd.exe backend started" -ForegroundColor Green
+# Windows Defender 常对刚拷贝的 fire_dictd.exe 做短暂独占扫描，导致首启动
+# ERROR_SHARING_VIOLATION（"being used by another process"）；重试几次即可。
+# 注意：即使这里启动失败也无妨——DLL 端 DictIpcProxy 首次连不上时会自行
+# CreateProcessW 拉起同目录 fire_dictd.exe（非沙箱场景兜底，§4.8）。
+$dictdStarted = $false
+for ($i = 0; $i -lt 10; $i++) {
+    try {
+        $null = Start-Process -FilePath $DictdExeDst -WindowStyle Hidden -ErrorAction Stop
+        $dictdStarted = $true
+        break
+    } catch {
+        Start-Sleep -Milliseconds 300
+    }
+}
+if ($dictdStarted) {
+    Write-Host "  [OK] fire_dictd.exe backend started" -ForegroundColor Green
+} else {
+    Write-Host "  [WARN] fire_dictd.exe launch failed (Defender/lock); DLL will auto-spawn on first IPC" -ForegroundColor Yellow
+}
 
 # ---- 6. Wait for ctfmon to restart ----
 Step "Waiting for ctfmon restart..."

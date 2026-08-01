@@ -7,13 +7,24 @@
 #include "../candidate_window/CandidateWindow.h"
 
 #include <msctf.h>
+#include <algorithm>
+#include <cctype>
 
 namespace firewin {
 
 // 在组字区写文本：用 ITfInsertAtSelection 插入，并对新范围设置组字显示属性。
 void TsfInputClient::SetCompositionText(const std::wstring& text) {
-    FIRE_LOG(L"[WinFire] SetCompositionText: pContext=%p text_len=%zu composition=%p\n",
-             (void*)session_.pContext, text.size(), (void*)composition_);
+    // 字节级转储写入组字区的文本：看占位空格 ' '(0x20) 是否写入、长度是否为 1。
+    std::string hex;
+    hex.reserve(text.size() * 3);
+    for (wchar_t wc : text) {
+        // 只看 BMP code unit（输入法组字区不会有代理对）
+        char b[8];
+        _snprintf_s(b, _countof(b), _TRUNCATE, "U+%04X ", (unsigned)wc);
+        hex += b;
+    }
+    FIRE_LOG(L"[WinFire] SetCompositionText: pContext=%p text_len=%zu composition=%p codeunits=[%hs]\n",
+             (void*)session_.pContext, text.size(), (void*)composition_, hex.c_str());
     if (!session_.pContext) return;
 
     ITfInsertAtSelection* pInsert = nullptr;
@@ -67,41 +78,77 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
 }
 
 void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
-    FIRE_LOG(L"[WinFire] EndCompositionAndCommit: pContext=%p composition=%p text_len=%zu\n",
-             (void*)session_.pContext, (void*)composition_, text.size());
+    // 转储待提交文本的 code unit，确认是否带空格(0x0020)。
+    std::string hex;
+    hex.reserve(text.size() * 7);
+    for (wchar_t wc : text) {
+        char b[8];
+        _snprintf_s(b, _countof(b), _TRUNCATE, "U+%04X ", (unsigned)wc);
+        hex += b;
+    }
+    FIRE_LOG(L"[WinFire] EndCompositionAndCommit: pContext=%p composition=%p text_len=%zu codeunits=[%hs]\n",
+             (void*)session_.pContext, (void*)composition_, text.size(), hex.c_str());
     if (!session_.pContext) return;
     ITfRange* pRange = nullptr;
     if (composition_ && SUCCEEDED(composition_->GetRange(&pRange)) && pRange) {
-        pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
-        // 重新锚定 range 覆盖完整文本（同 SetCompositionText 的说明）
-        pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
-        LONG moved = 0;
-        pRange->ShiftEnd(session_.editCookie, (LONG)text.size(), &moved, nullptr);
-        // 在 EndComposition 前克隆光标位置。Explorer 搜索框等控件在
-        // EndComposition 后不会自动将光标移到组字文本末尾，必须显式 SetSelection。
-        ITfRange* pCaret = nullptr;
-        pRange->Clone(&pCaret);
-        pCaret->Collapse(session_.editCookie, TF_ANCHOR_END);
+        // 关键：先把组字区内容彻底清空，再结束组字，最后用 InsertTextAtSelection
+        // 干净插入最终文本。
+        //
+        // 背景：show_code_in_window 开启时组字区放了一个占位空格 ' '。此前实现是
+        // 在组字 range 上 SetText(最终文本) 试图覆盖占位空格——但 console 类宿主
+        //（PowerShell 跑在 conhost/WindowsTerminal）的 TSF text store 维护 range
+        // 的方式与 RichEdit/Notepad 不同，SetText 未能可靠覆盖，占位空格残留在
+        // 文档里，上屏变成「我 」。EndComposition 本身只移除组字属性、不清空文本
+        //（见 MSDN），所以必须显式清空。
+        //
+        // 改为「先 SetText("") 清空 → EndComposition → InsertTextAtSelection 干净
+        // 插入」后，不依赖任何 range 复用语义，对所有宿主都稳健；桌面程序行为等价。
+        HRESULT hrSet = pRange->SetText(session_.editCookie, 0, L"", 0);
+        FIRE_LOG_HR(hrSet, L"EndCompositionAndCommit: SetText(\"\") clear placeholder");
+        HRESULT hrCol = pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
+        FIRE_LOG_HR(hrCol, L"EndCompositionAndCommit: Collapse(START)");
         pRange->Release();
-        composition_->EndComposition(session_.editCookie);
+        HRESULT hrEnd = composition_->EndComposition(session_.editCookie);
+        FIRE_LOG_HR(hrEnd, L"EndCompositionAndCommit: EndComposition");
         composition_->Release();
         composition_ = nullptr;
-        // 显式定位光标到上屏文本末尾
-        TF_SELECTION sel;
-        sel.range = pCaret;
-        sel.style.ase = TF_AE_NONE;
-        sel.style.fInterimChar = FALSE;
-        session_.pContext->SetSelection(session_.editCookie, 1, &sel);
-        pCaret->Release();
-        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: composition ended OK\n");
+        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: composition cleared & ended\n");
+
+        // 结束组字后用 InsertTextAtSelection 干净插入最终文本（不依赖 range 复用）。
+        if (!text.empty()) {
+            ITfInsertAtSelection* pInsert = nullptr;
+            HRESULT hrQI = session_.pContext->QueryInterface(IID_ITfInsertAtSelection,
+                                                             (void**)&pInsert);
+            FIRE_LOG_HR(hrQI, L"EndCompositionAndCommit: QI ITfInsertAtSelection");
+            if (SUCCEEDED(hrQI) && pInsert) {
+                ITfRange* r = nullptr;
+                HRESULT hrIns = pInsert->InsertTextAtSelection(session_.editCookie, 0,
+                                                               text.c_str(),
+                                                               (LONG)text.size(), &r);
+                FIRE_LOG_HR(hrIns, L"EndCompositionAndCommit: InsertTextAtSelection(final)");
+                if (r) {
+                    // 显式定位光标到插入文本末尾（部分控件 EndComposition 后不会自动移光标）
+                    r->Collapse(session_.editCookie, TF_ANCHOR_END);
+                    TF_SELECTION sel;
+                    sel.range = r;
+                    sel.style.ase = TF_AE_NONE;
+                    sel.style.fInterimChar = FALSE;
+                    session_.pContext->SetSelection(session_.editCookie, 1, &sel);
+                    r->Release();
+                }
+                pInsert->Release();
+            }
+        }
     } else if (!text.empty()) {
         // 无组字：直接在选区插入
+        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: NO composition, InsertTextAtSelection\n");
         ITfInsertAtSelection* pInsert = nullptr;
         if (SUCCEEDED(session_.pContext->QueryInterface(IID_ITfInsertAtSelection,
                                                         (void**)&pInsert))) {
             ITfRange* r = nullptr;
-            pInsert->InsertTextAtSelection(session_.editCookie, 0, text.c_str(),
-                                           (LONG)text.size(), &r);
+            HRESULT hrIns = pInsert->InsertTextAtSelection(session_.editCookie, 0, text.c_str(),
+                                                           (LONG)text.size(), &r);
+            FIRE_LOG_HR(hrIns, L"EndCompositionAndCommit: InsertTextAtSelection(no-composition)");
             if (r) {
                 // 显式定位光标到插入文本末尾（同上原因）
                 r->Collapse(session_.editCookie, TF_ANCHOR_END);
@@ -113,19 +160,40 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
                 r->Release();
             }
             pInsert->Release();
-            FIRE_LOG(L"[WinFire] EndCompositionAndCommit: InsertTextAtSelection (no composition)\n");
         }
     }
 }
 
 void TsfInputClient::insert_text(const std::string& utf8) {
-    FIRE_LOG(L"[WinFire] insert_text: '%hs'\n", utf8.c_str());
+    // 字节级十六进制转储：区分 ASCII 空格(0x20)与全角空格(E3 80 80)，定位追加空格来源。
+    // 仅 Debug 下生效，便于 DbgView 分析。
+    std::string hex;
+    hex.reserve(utf8.size() * 3);
+    for (unsigned char c : utf8) {
+        char b[4];
+        _snprintf_s(b, _countof(b), _TRUNCATE, "%02X ", c);
+        hex += b;
+    }
+    FIRE_LOG(L"[WinFire] insert_text: '%hs' (len=%zu bytes hex=[%hs])\n",
+             utf8.c_str(), utf8.size(), hex.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     EndCompositionAndCommit(w);
     hide_candidates();
 }
 
 void TsfInputClient::set_marked_text(const std::string& utf8) {
+    // console 类宿主（conhost/WindowsTerminal 等）的 TSF text store 与控制台输入行
+    //（ReadConsole 输入缓冲）耦合：写入组字区的内容会立即进入输入行，且在提交时
+    // 无法撤销。show_code_in_window 开启时引擎写入的占位空格 ' ' 会被控制台吸收，
+    // 提交后残留成尾随空格（上屏变成「我 」）。
+    //
+    // 故对 console 宿主完全不写 preedit 文本——composition_ 全程保持 null，
+    // 提交走「无组字」分支（直接 InsertTextAtSelection，无占位符可残留）。
+    // 候选窗本就用兜底定位（无光标信息时居中 2/3），不依赖组字区锚点。
+    if (IsConsoleHost()) {
+        FIRE_LOG(L"[WinFire] set_marked_text: '%hs' SKIPPED (console host)\n", utf8.c_str());
+        return;
+    }
     FIRE_LOG(L"[WinFire] set_marked_text: '%hs'\n", utf8.c_str());
     std::wstring w = KeyEventTranslator::Utf8ToUtf16(utf8);
     SetCompositionText(w);
@@ -233,7 +301,16 @@ std::string TsfInputClient::get_previous_text() {
         }
     }
     pRange->Release();
-    FIRE_LOG(L"[WinFire] get_previous_text: result='%hs'\n", result.c_str());
+    // 字节级十六进制：看返回值是否为占位空格 ' '(0x20)，它会触发 should_concat_with_whitespace。
+    std::string hex;
+    hex.reserve(result.size() * 3);
+    for (unsigned char c : result) {
+        char b[4];
+        _snprintf_s(b, _countof(b), _TRUNCATE, "%02X ", c);
+        hex += b;
+    }
+    FIRE_LOG(L"[WinFire] get_previous_text: result='%hs' (len=%zu bytes hex=[%hs])\n",
+             result.c_str(), result.size(), hex.c_str());
     FIRE_LOG_EXIT();
     return result;
 }
@@ -250,6 +327,39 @@ std::string TsfInputClient::bundle_id() {
     FIRE_LOG(L"[WinFire] bundle_id: '%hs'\n", id.c_str());
     FIRE_LOG_EXIT();
     return id;
+}
+
+bool TsfInputClient::IsConsoleHost() const {
+    if (consoleHostCached_ != -1) return consoleHostCached_ == 1;
+    // bundle_id() 非常量（有 FIRE_LOG），此处用 const_cast 规避——读取无副作用。
+    // 直接取宿主 exe 名（避免递归到带日志的 bundle_id）。
+    wchar_t path[MAX_PATH] = {0};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    std::wstring w(path);
+    size_t pos = w.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) w = w.substr(pos + 1);
+    // 转小写比较
+    std::string name = KeyEventTranslator::Utf16ToUtf8(w);
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    // 控制台类宿主名单：TSF text store 与控制台输入行耦合，
+    // 写入组字区的内容会立即进入输入行且提交时无法撤销。
+    static const char* kConsoleHosts[] = {
+        "conhost.exe",       // Windows 经典控制台宿主（已由日志确认）
+        "openconsole.exe",   // Windows Terminal 的 conhost 替身
+        "windowsterminal.exe",
+        "windowterminal.exe",
+        "cmd.exe",
+        "powershell.exe",    // Windows PowerShell
+        "pwsh.exe",          // PowerShell 7+
+    };
+    bool matched = false;
+    for (const char* h : kConsoleHosts) {
+        if (name == h) { matched = true; break; }
+    }
+    consoleHostCached_ = matched ? 1 : 0;
+    FIRE_LOG(L"[WinFire] IsConsoleHost: host='%hs' -> %d\n", name.c_str(), matched ? 1 : 0);
+    return matched;
 }
 
 void TsfInputClient::show_candidates(const fire::CandidatesView& view) {

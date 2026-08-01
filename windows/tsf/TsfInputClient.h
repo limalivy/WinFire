@@ -63,6 +63,15 @@ private:
     // 此时回退到此缓存值，保持候选窗在原位置附近刷新。
     fire::CaretRect lastValidCaret_;
 
+    // console 类宿主判定缓存：-1 未查 / 0 否 / 1 是。按 bundle_id()（宿主 exe 名）
+    // 匹配控制台宿主名单，结果在 IsConsoleHost() 内缓存，避免每次按键都字符串比较。
+    mutable int consoleHostCached_ = -1;
+
+    // 是否为 console 类宿主（conhost/OpenConsole/WindowsTerminal/cmd/powershell/pwsh）。
+    // 这类宿主的 TSF text store 与控制台输入行耦合：写入组字区的内容会立即进入输入行
+    // 且无法在提交时撤销，故需特殊处理（不写占位 preedit）。
+    bool IsConsoleHost() const;
+
     // 在组字区写入文本（UTF-8）。空串表示清空组字区。
     void SetCompositionText(const std::wstring& text);
     // 结束组字并把文本落地到宿主

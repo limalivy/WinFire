@@ -254,6 +254,7 @@ STDMETHODIMP CFireTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     FIRE_LOG_ENTER();
     // Activate 在 TSF 主线程调用，已脱离 DllMain 的加载器锁，可安全启用文件日志。
     firewin::FireLogSetFsReady(true);
+    firewin::FireLogDiagBannerOnce();  // 每进程一次：打印 WinFire/宿主版本号供 DbgView 识别
     FIRE_LOG(L"[WinFire] Activate: ptim=%p tid=%lu [tid=%lu]\n",
              (void*)ptim, (unsigned long)tid, GetCurrentThreadId());
     threadMgr_ = ptim;
