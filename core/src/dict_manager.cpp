@@ -136,6 +136,11 @@ void DictManager::prepare_statement() {
             return;
         }
         sqlite3_exec(db_, "PRAGMA case_sensitive_like=ON;", nullptr, nullptr, nullptr);
+        // 内存映射 I/O：用缺页中断按需把库页映射进进程地址空间，而非 open 时一次性
+        // 读进 page cache。冷缓存下首次打开不再卡在「把整库读盘」（词库 ~14.5MB），
+        // 实际查询某页时才触发缺页。sqlite 会自动把 mmap_size cap 在文件大小。
+        // 仅查字库生效（DictManager 只服务查字库）。
+        sqlite3_exec(db_, "PRAGMA mmap_size=268435456;", nullptr, nullptr, nullptr);
     }
 }
 

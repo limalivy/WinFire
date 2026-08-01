@@ -3,6 +3,7 @@
 //
 #include "NamedPipeClient.h"
 
+#include "DebugLog.h"
 #include "../common/IpcShared.h"
 
 namespace {
@@ -27,19 +28,28 @@ bool NamedPipeClient::TryConnect() {
     const std::wstring name = MakeDictPipeName();
     HANDLE h = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                            OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
+    if (h == INVALID_HANDLE_VALUE) {
+        FIRE_LOG(L"[WinFire] TryConnect: FAILED err=%lu (daemon not listening yet?)\n",
+                 GetLastError());
+        return false;
+    }
 
     // 客户端也用消息读模式，帧边界与 server 一致。
     DWORD mode = PIPE_READMODE_MESSAGE;
     SetNamedPipeHandleState(h, &mode, nullptr, nullptr);
     pipe_ = h;
+    FIRE_LOG(L"[WinFire] TryConnect: OK pipe=%p\n", (void*)h);
     return true;
 }
 
 bool NamedPipeClient::LaunchBackend() {
     // 频繁拉起保护：距上次拉起不足 3s 则跳过（后台可能仍在启动）。
     ULONGLONG now = GetTickCount64();
-    if (lastLaunchTick_ != 0 && now - lastLaunchTick_ < 3000) return false;
+    if (lastLaunchTick_ != 0 && now - lastLaunchTick_ < 3000) {
+        FIRE_LOG(L"[WinFire] LaunchBackend: throttled (last launch %lums ago)\n",
+                 (unsigned long)(now - lastLaunchTick_));
+        return false;
+    }
     lastLaunchTick_ = now;
 
     // 定位与本 DLL 同目录下的 fire_dictd.exe。
@@ -47,6 +57,7 @@ bool NamedPipeClient::LaunchBackend() {
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             reinterpret_cast<LPCWSTR>(&GetModuleAnchor), &self)) {
+        FIRE_LOG(L"[WinFire] LaunchBackend: GetModuleHandleExW FAILED\n");
         return false;
     }
     wchar_t path[MAX_PATH] = {0};
@@ -67,6 +78,8 @@ bool NamedPipeClient::LaunchBackend() {
     cmdBuf.push_back(L'\0');
     BOOL ok = CreateProcessW(exe.c_str(), cmdBuf.data(), nullptr, nullptr, FALSE,
                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    FIRE_LOG(L"[WinFire] LaunchBackend: CreateProcessW('%s') -> %d (err=%lu)\n",
+             exe.c_str(), ok ? 1 : 0, ok ? 0 : GetLastError());
     if (!ok) return false;
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -81,6 +94,7 @@ bool NamedPipeClient::EnsureConnected() {
     // 任何 Sleep/重试都会卡住宿主，表现为开机后首次按键卡死 Chrome 等）。
     // 立即返回 false 让上层降级透传这一次按键；后台会在数百 ms 内就绪，
     // 下一次按键时 TryConnect 自然成功。
+    FIRE_LOG(L"[WinFire] EnsureConnected: not connected, launching backend (no wait)\n");
     LaunchBackend();
     return false;
 }
@@ -154,19 +168,32 @@ bool NamedPipeClient::SendRequest(fire::ipc::MsgType type,
                                   const std::vector<uint8_t>& requestPayload,
                                   fire::ipc::MsgType& responseType,
                                   std::vector<uint8_t>& responsePayload, DWORD timeoutMs) {
-    if (!EnsureConnected()) return false;
+    ULONGLONG t0 = GetTickCount64();
+    if (!EnsureConnected()) {
+        FIRE_LOG(L"[WinFire] SendRequest: type=%u FAIL at connect (%lums, daemon down?)\n",
+                 (unsigned)type, (unsigned long)(GetTickCount64() - t0));
+        return false;
+    }
 
     uint32_t reqId = nextRequestId_++;
     if (!WriteFrameOverlapped(type, reqId, requestPayload, timeoutMs)) {
+        FIRE_LOG(L"[WinFire] SendRequest: type=%u FAIL at write (%lums, timeout=%lums)\n",
+                 (unsigned)type, (unsigned long)(GetTickCount64() - t0), (unsigned long)timeoutMs);
         Disconnect();  // 标记需重连
         return false;
     }
     fire::ipc::FrameHeader hdr;
     if (!ReadFrameOverlapped(hdr, responsePayload, timeoutMs)) {
+        // 读超时是冷启动掉输入的关键信号：连上了、写进去了，但后台还没回（Init 阻塞）。
+        FIRE_LOG(L"[WinFire] SendRequest: type=%u FAIL at read/TIMEOUT (%lums, budget=%lums) — daemon slow?\n",
+                 (unsigned)type, (unsigned long)(GetTickCount64() - t0), (unsigned long)timeoutMs);
         Disconnect();
         return false;
     }
     responseType = (fire::ipc::MsgType)hdr.msg_type;
+    FIRE_LOG(L"[WinFire] SendRequest: type=%u OK resp=%u took=%lums\n",
+             (unsigned)type, (unsigned)responseType,
+             (unsigned long)(GetTickCount64() - t0));
     return true;
 }
 

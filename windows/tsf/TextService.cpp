@@ -184,9 +184,10 @@ void CFireTextService::InitEngine() {
     // 后台不可用时 IsAvailable()=false，引擎降级透传（不再回退本进程直接查库）。
     {
         auto proxy = std::make_unique<DictIpcProxy>(inputClient_.bundle_id());
+        ULONGLONG tHs = GetTickCount64();
         proxy->Handshake();
-        FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake ready=%d\n",
-                 proxy->IsAvailable() ? 1 : 0);
+        FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake ready=%d took=%lums\n",
+                 proxy->IsAvailable() ? 1 : 0, (unsigned long)(GetTickCount64() - tHs));
         dictService_ = std::move(proxy);
     }
 
@@ -507,7 +508,13 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     // TryRecover 自带 1s 退避；后台就绪后下一次按键即恢复中文输入，
     // 避免「超时一次后该进程再也无法输入中文」的死锁。
     if (dictService_ && !dictService_->IsAvailable()) {
+        FIRE_LOG(L"[WinFire] OnKeyDown: dict unavailable, attempting TryRecover (key passthrough until ready)\n");
+        bool wasAvail = dictService_->IsAvailable();
         dictService_->TryRecover();
+        bool nowAvail = dictService_->IsAvailable();
+        if (!wasAvail && nowAvail) {
+            FIRE_LOG(L"[WinFire] OnKeyDown: TryRecover SUCCEEDED, dict now available\n");
+        }
     }
 
     BYTE kb[256];

@@ -80,6 +80,12 @@ Statistics::~Statistics() {
 void Statistics::init_db(const std::string& db_path) {
     if (sqlite3_open_v2(db_path.c_str(), &db_,
                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) == SQLITE_OK) {
+        // WAL + synchronous=NORMAL：统计库为写入密集（每次上屏都写），WAL 把写变成
+        // append -wal 文件而非改主库，配合 NORMAL（每个事务结束不强制 fsync）显著
+        // 降低写入延迟与锁竞争。仅统计库生效（Statistics 只服务统计库，不碰查字库）。
+        // 建表(migrate)前设，确保建表写也走 WAL。
+        sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
         migrate();
     } else {
         if (db_) {

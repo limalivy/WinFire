@@ -65,6 +65,7 @@
   <ItemGroup>
     <ClInclude Include="NamedPipeServer.h" />
     <ClInclude Include="DictServer.h" />
+    <ClInclude Include="DictLog.h" />
     <ClInclude Include="..\common\IpcShared.h" />
     <ClInclude Include="..\config\ConfigStore.h" />
   </ItemGroup>

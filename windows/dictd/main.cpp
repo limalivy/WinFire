@@ -12,6 +12,7 @@
 #include <atomic>
 #include <thread>
 
+#include "DictLog.h"
 #include "DictServer.h"
 #include "NamedPipeServer.h"
 #include "../common/IpcShared.h"
@@ -28,12 +29,16 @@ std::atomic<int> g_activeConnections{0};
 }  // namespace
 
 int wmain() {
+    firewin::DictLogBannerOnce();  // 打印版本横幅（每进程一次）
+
     // 单实例：同一会话若已有后台在跑则直接退出。
     HANDLE mutex = CreateMutexW(nullptr, TRUE, firewin::MakeDictdMutexName().c_str());
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        DLOG(L"wmain: another instance already running (mutex exists), exit\n");
         CloseHandle(mutex);
         return 0;
     }
+    DLOG(L"wmain: singleton mutex acquired, starting\n");
 
     firewin::DictServer server;
     // 异步初始化词库：冷启动时打开 sqlite（磁盘冷缓存）可能 >1s，
@@ -52,9 +57,11 @@ int wmain() {
 
         if (pipe != INVALID_HANDLE_VALUE) {
             idleRounds = 0;
-            g_activeConnections.fetch_add(1);
+            int active = g_activeConnections.fetch_add(1) + 1;
+            DLOG(L"accept: client connected (active=%d), spawning ServeConnection\n", active);
             std::thread([&server, pipe]() {
                 server.ServeConnection(pipe);
+                DLOG(L"ServeConnection: finished, disconnecting pipe\n");
                 CloseHandle(pipe);
                 g_activeConnections.fetch_sub(1);
             }).detach();
