@@ -37,6 +37,10 @@ public:
     void close();
     bool is_open() const { return db_ != nullptr; }
 
+    // 候选结果变更代次（每次 clear_query_cache 递增）。供 dictd 纳入 CacheValidate
+    // token 计算，DLL 据此失效本地缓存。
+    uint64_t user_cache_generation() const { return user_cache_generation_; }
+
     // 对应 getCandidates(query:page:)
     QueryResult get_candidates(const std::string& query, int page = 1);
 
@@ -98,6 +102,12 @@ private:
     CacheList cache_lru_;  // front=MRU，back=LRU
     std::unordered_map<std::string, CacheList::iterator> cache_map_;
     static constexpr size_t kCacheLimit = 5000;
+
+    // 候选结果变更代次：每次 clear_query_cache() 递增。clear_query_cache 是所有
+    // 「会让候选结果变化」路径（reinit/prepend_candidate/prepend_candidates/
+    // update_user_dict）的唯一收口，故此代次覆盖 db 重建 + 用户词改动。
+    // dictd 在 CacheValidate 响应里把它纳入 token，DLL 据此失效本地缓存。
+    uint64_t user_cache_generation_ = 0;
 
     // 热路径查询语句缓存：以完整 SQL 文本为 key 复用已编译的 sqlite3_stmt*，
     // 避免每次按键都 sqlite3_prepare_v2 重新编译 SQL（P0 优化）。

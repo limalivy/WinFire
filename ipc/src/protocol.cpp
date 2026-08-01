@@ -174,6 +174,35 @@ SaveCacheRequest decode_save_cache_request(Reader& r) {
     return req;
 }
 
+// ---- CacheValidate ----
+std::vector<uint8_t> encode_cache_validate_request(const CacheValidateRequest& req) {
+    Writer w;
+    w.put_u16(req.client_version);
+    w.put_string(req.app_id);
+    return w.take();
+}
+
+CacheValidateRequest decode_cache_validate_request(Reader& r) {
+    CacheValidateRequest req;
+    req.client_version = r.get_u16();
+    req.app_id = r.get_string();
+    return req;
+}
+
+std::vector<uint8_t> encode_cache_validate_response(const CacheValidateResponse& resp) {
+    Writer w;
+    w.put_u64(resp.token);
+    w.put_u8(resp.allow_dll_cache ? 1 : 0);
+    return w.take();
+}
+
+CacheValidateResponse decode_cache_validate_response(Reader& r) {
+    CacheValidateResponse resp;
+    resp.token = r.get_u64();
+    resp.allow_dll_cache = r.get_u8() != 0;
+    return resp;
+}
+
 // ---- Error ----
 std::vector<uint8_t> encode_error(const ErrorMessage& err) {
     Writer w;

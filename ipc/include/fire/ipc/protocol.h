@@ -39,6 +39,7 @@ enum class MsgType : uint16_t {
     RecordStat         = 0x08,
     Reinit             = 0x09,
     SaveCache          = 0x0A,  // DLL Deactivate 时触发 daemon 落盘 LRU 快照（异步）
+    CacheValidate      = 0x0B,  // DLL 校验本地候选缓存是否仍有效（同步有响应）
     Error              = 0xFF,
 };
 
@@ -128,6 +129,23 @@ struct SaveCacheRequest {
 };
 std::vector<uint8_t> encode_save_cache_request(const SaveCacheRequest& req);
 SaveCacheRequest decode_save_cache_request(Reader& r);
+
+// CacheValidate 请求：DLL 在 Activate / 配置变更 / 重连后校验本地候选缓存是否仍有效。
+// 语义：DLL 把上次拿到的 token 记下，本次响应 token 不变即缓存有效；变化则清空本地缓存。
+// token 由 dictd 综合计算（db mtime/size + ConfigDigest + user_cache_generation），
+// 对 DLL 不透明。allow_dll_cache=false（如开启动态调频）时 DLL 必须禁用本地缓存。
+struct CacheValidateRequest {
+    uint16_t client_version = kProtocolVersion;
+    std::string app_id;  // 仅日志用
+};
+struct CacheValidateResponse {
+    uint64_t token = 0;          // 0 = dictd 未就绪，DLL 应禁用缓存
+    bool allow_dll_cache = false;  // dictd 裁决：是否允许 DLL 启用本地缓存
+};
+std::vector<uint8_t> encode_cache_validate_request(const CacheValidateRequest& req);
+CacheValidateRequest decode_cache_validate_request(Reader& r);
+std::vector<uint8_t> encode_cache_validate_response(const CacheValidateResponse& resp);
+CacheValidateResponse decode_cache_validate_response(Reader& r);
 
 // Error 响应：i32 code, str message
 struct ErrorMessage {

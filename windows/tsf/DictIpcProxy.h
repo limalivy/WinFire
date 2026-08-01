@@ -10,7 +10,10 @@
 //
 #pragma once
 
+#include <list>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "fire/dict_service.h"
@@ -30,6 +33,12 @@ public:
     // 首次握手：连接后台并发 Hello。返回后台是否就绪（词库已打开）。
     // 失败（连不上/超时）时置 available_=false。
     bool Handshake();
+
+    // 向 dictd 校验本地候选缓存是否仍有效（Activate / 配置变更 / 重连后调用）。
+    // 据 dictd 返回的 token 决定清空/保留本地 LRU；据 allow_dll_cache 决定是否启用。
+    // 通信失败时保守禁用缓存（清空 + 关闭），但不改动 available_（缓存有效性与
+    // 后台可达性正交）。
+    void ValidateCache() override;
 
     fire::QueryResult GetCandidates(const std::string& query, int page) override;
     fire::QueryResult GetReverseLookup(const std::string& pinyin, int page) override;
@@ -65,6 +74,35 @@ private:
     static constexpr DWORD kRecoverBackoffMs = 1000;
 
     static constexpr DWORD kSyncTimeoutMs = 20;  // 设计 §5.5：同步 20ms 超时
+
+    // ---- DLL 本地候选缓存（仅 allow_dll_cache=true 时启用）----
+    // dictd 在 CacheValidate 响应里裁决是否允许（开启动态调频时禁止，因候选顺序会变）。
+    // token 由 dictd 综合计算（db mtime/size + ConfigDigest + user_cache_generation），
+    // 变化即说明码表/配置/用户词变了，整个缓存失效。
+    struct DllCacheKey {
+        std::string query;
+        int page = 1;
+        bool operator==(const DllCacheKey& o) const {
+            return page == o.page && query == o.query;
+        }
+    };
+    struct DllCacheKeyHash {
+        size_t operator()(const DllCacheKey& k) const noexcept {
+            size_t h = std::hash<int>{}(k.page);
+            h ^= std::hash<std::string>{}(k.query) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    using DllCacheList = std::list<std::pair<DllCacheKey, fire::QueryResult>>;
+    DllCacheList dll_cache_lru_;  // front=MRU，back=LRU
+    std::unordered_map<DllCacheKey, DllCacheList::iterator, DllCacheKeyHash> dll_cache_map_;
+    static constexpr size_t kDllCacheLimit = 1000;
+    bool dll_cache_enabled_ = false;  // dictd 裁决：是否允许缓存
+    uint64_t cache_token_ = 0;        // 上次 ValidateCache 拿到的 token（0=未校验/无效）
+
+    bool dll_cache_get(const DllCacheKey& key, fire::QueryResult& out);
+    void dll_cache_put(const DllCacheKey& key, const fire::QueryResult& result);
+    void dll_cache_clear();
 };
 
 }  // namespace firewin

@@ -59,10 +59,80 @@ bool DictIpcProxy::TryRecover() {
     lastRecoverTick_ = now;
     FIRE_LOG(L"[WinFire] TryRecover: attempting Handshake (available was false)\n");
     // EnsureConnected 已在 Handshake 内调用，此处直接重新握手（会重连 + 拉后台）。
-    return Handshake();
+    if (!Handshake()) return false;
+    // 重连成功后必须重新校验缓存：token 可能因后台重启而变化（dictd 重启 = 新 generation）。
+    ValidateCache();
+    return true;
+}
+
+void DictIpcProxy::ValidateCache() {
+    CacheValidateRequest req;
+    req.client_version = kProtocolVersion;
+    req.app_id = app_id_;
+
+    MsgType respType;
+    std::vector<uint8_t> respPayload;
+    if (!client_.SendRequest(MsgType::CacheValidate, encode_cache_validate_request(req),
+                             respType, respPayload, kSyncTimeoutMs)) {
+        // 通信失败：保守禁用缓存（清空 + 关闭），不动 available_（缓存有效性与
+        // 后台可达性正交；available_ 由 GetCandidates 等热路径单独维护）。
+        bool wasEnabled = dll_cache_enabled_;
+        dll_cache_clear();
+        dll_cache_enabled_ = false;
+        if (wasEnabled) {
+            FIRE_LOG(L"[WinFire] ValidateCache: FAIL (send/timeout), dll_cache disabled\n");
+        }
+        return;
+    }
+    if (respType != MsgType::CacheValidate) {
+        dll_cache_clear();
+        dll_cache_enabled_ = false;
+        FIRE_LOG(L"[WinFire] ValidateCache: FAIL (resp type=%u != CacheValidate)\n",
+                 (unsigned)respType);
+        return;
+    }
+    Reader r(respPayload);
+    CacheValidateResponse resp = decode_cache_validate_response(r);
+    if (!r.ok()) {
+        dll_cache_clear();
+        dll_cache_enabled_ = false;
+        FIRE_LOG(L"[WinFire] ValidateCache: FAIL (decode error)\n");
+        return;
+    }
+    // token 变化 → 码表/配置/用户词变了，整个缓存失效。
+    if (resp.token != cache_token_) {
+        dll_cache_clear();
+        FIRE_LOG(L"[WinFire] ValidateCache: token changed (old=%llu new=%llu), cache cleared\n",
+                 (unsigned long long)cache_token_, (unsigned long long)resp.token);
+        cache_token_ = resp.token;
+    }
+    // allow_dll_cache=false（如开启动态调频）→ 禁用并清空。
+    bool wasEnabled = dll_cache_enabled_;
+    dll_cache_enabled_ = resp.allow_dll_cache;
+    if (!dll_cache_enabled_ && wasEnabled) {
+        dll_cache_clear();
+    }
+    FIRE_LOG(L"[WinFire] ValidateCache: OK token=%llu allow_dll_cache=%d enabled=%d\n",
+             (unsigned long long)resp.token, resp.allow_dll_cache ? 1 : 0,
+             dll_cache_enabled_ ? 1 : 0);
 }
 
 fire::QueryResult DictIpcProxy::GetCandidates(const std::string& query, int page) {
+#ifdef FIRE_DEBUG
+    ULONGLONG t0 = GetTickCount64();  // 耗时统计基准（仅 Debug，Release 零开销）
+#endif
+    // 本地 LRU 命中：直接返回，0 次 IPC 往返。仅 dll_cache_enabled_ 时启用。
+    if (dll_cache_enabled_) {
+        DllCacheKey key{query, page};
+        fire::QueryResult cached;
+        if (dll_cache_get(key, cached)) {
+            FIRE_LOG(L"[WinFire] GetCandidates: HIT cache q='%hs' page=%d took=%lums results=%zu\n",
+                     query.c_str(), page,
+                     (unsigned long)(GetTickCount64() - t0), cached.candidates.size());
+            return cached;
+        }
+    }
+
     QueryRequest req;
     req.query = query;
     req.page = page;
@@ -72,8 +142,9 @@ fire::QueryResult DictIpcProxy::GetCandidates(const std::string& query, int page
                              respPayload, kSyncTimeoutMs)) {
         bool wasAvail = available_;
         available_ = false;
-        FIRE_LOG(L"[WinFire] GetCandidates: FAIL q='%hs' available_=%d->false\n",
-                 query.c_str(), wasAvail ? 1 : 0);
+        FIRE_LOG(L"[WinFire] GetCandidates: FAIL q='%hs' available_=%d->false took=%lums\n",
+                 query.c_str(), wasAvail ? 1 : 0,
+                 (unsigned long)(GetTickCount64() - t0));
         return {};
     }
     bool wasAvail = available_;
@@ -83,6 +154,13 @@ fire::QueryResult DictIpcProxy::GetCandidates(const std::string& query, int page
     if (!wasAvail) {
         FIRE_LOG(L"[WinFire] GetCandidates: RECOVERED available_ false->true, q='%hs' results=%zu\n",
                  query.c_str(), result.candidates.size());
+    }
+    FIRE_LOG(L"[WinFire] GetCandidates: MISS cache q='%hs' page=%d took=%lums results=%zu\n",
+             query.c_str(), page,
+             (unsigned long)(GetTickCount64() - t0), result.candidates.size());
+    // IPC 成功且缓存启用：填入本地 LRU 供下次命中。
+    if (dll_cache_enabled_ && respType == MsgType::QueryCandidates) {
+        dll_cache_put(DllCacheKey{query, page}, result);
     }
     return result;
 }
@@ -169,6 +247,37 @@ void DictIpcProxy::SaveCache(const std::string& app_id) {
     SaveCacheRequest req;
     req.app_id = app_id;
     client_.SendAsync(MsgType::SaveCache, encode_save_cache_request(req));
+}
+
+// ---- DLL 本地候选 LRU（O(1) 提升/淘汰，与 DictManager 内存 LRU 同模式）----
+bool DictIpcProxy::dll_cache_get(const DllCacheKey& key, fire::QueryResult& out) {
+    auto it = dll_cache_map_.find(key);
+    if (it == dll_cache_map_.end()) return false;
+    out = it->second->second;
+    // 提升到 front（splice O(1)）。
+    dll_cache_lru_.splice(dll_cache_lru_.begin(), dll_cache_lru_, it->second);
+    return true;
+}
+
+void DictIpcProxy::dll_cache_put(const DllCacheKey& key, const fire::QueryResult& result) {
+    auto it = dll_cache_map_.find(key);
+    if (it != dll_cache_map_.end()) {
+        it->second->second = result;
+        dll_cache_lru_.splice(dll_cache_lru_.begin(), dll_cache_lru_, it->second);
+        return;
+    }
+    if (dll_cache_map_.size() >= kDllCacheLimit && !dll_cache_lru_.empty()) {
+        auto victim = std::prev(dll_cache_lru_.end());
+        dll_cache_map_.erase(victim->first);
+        dll_cache_lru_.pop_back();
+    }
+    dll_cache_lru_.push_front({key, result});
+    dll_cache_map_[key] = dll_cache_lru_.begin();
+}
+
+void DictIpcProxy::dll_cache_clear() {
+    dll_cache_map_.clear();
+    dll_cache_lru_.clear();
 }
 
 }  // namespace firewin

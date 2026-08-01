@@ -154,6 +154,7 @@ void DictManager::prepare_statement() {
 }
 
 void DictManager::clear_query_cache() {
+    ++user_cache_generation_;  // 先于清空递增，确保 DLL 能据此失效本地缓存
     cache_map_.clear();
     cache_lru_.clear();
     // 集中失效点：内存 LRU 清空时，持久快照文件也一并删除。

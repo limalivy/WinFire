@@ -150,6 +150,41 @@ TEST_CASE(ipc_hello_roundtrip) {
     CHECK_EQ((int)gotResp.temp_en_trigger, (int)';');
 }
 
+TEST_CASE(ipc_cache_validate_roundtrip) {
+    // 请求往返
+    CacheValidateRequest req;
+    req.client_version = 1;
+    req.app_id = "notepad.exe";
+    auto rp = encode_cache_validate_request(req);
+    Reader r1(rp);
+    CacheValidateRequest gotReq = decode_cache_validate_request(r1);
+    CHECK(r1.ok());
+    CHECK_EQ(gotReq.client_version, 1);
+    CHECK_STR_EQ(gotReq.app_id, "notepad.exe");
+
+    // 响应往返：token 取全位模式以验证 u64 小端编解码正确
+    CacheValidateResponse resp;
+    resp.token = 0x0123456789ABCDEFULL;
+    resp.allow_dll_cache = true;
+    auto sp = encode_cache_validate_response(resp);
+    Reader r2(sp);
+    CacheValidateResponse gotResp = decode_cache_validate_response(r2);
+    CHECK(r2.ok());
+    CHECK_EQ(gotResp.token, 0x0123456789ABCDEFULL);
+    CHECK_EQ(gotResp.allow_dll_cache, true);
+
+    // 边界：token=0、allow_dll_cache=false（dictd 未就绪时的响应）
+    CacheValidateResponse resp2;
+    resp2.token = 0;
+    resp2.allow_dll_cache = false;
+    auto sp2 = encode_cache_validate_response(resp2);
+    Reader r3(sp2);
+    CacheValidateResponse got2 = decode_cache_validate_response(r3);
+    CHECK(r3.ok());
+    CHECK_EQ(got2.token, 0ULL);
+    CHECK_EQ(got2.allow_dll_cache, false);
+}
+
 TEST_CASE(ipc_freq_request_roundtrip) {
     FreqRequest req;
     req.query = "ss";

@@ -48,6 +48,14 @@ namespace query_cache_store {
 // 不同配置（候选个数、码表方案、词组开关）下摘要不同，加载时据此丢弃过期快照。
 uint32_t ConfigDigest(int code_mode, int candidate_count, bool enable_word_input);
 
+// FNV-1a 64bit 哈希（字节序列）。供 dictd 把多维指纹（db mtime/size/config_digest/
+// user_cache_generation）压成一个 u64 token，DLL 仅比较相等性，不解析其内部。
+// 放在 query_cache_store（DLL + dictd 共享的跨层模块）便于双方复用同一实现。
+uint64_t Fnv1a64(const uint8_t* data, size_t len);
+inline uint64_t Fnv1a64(const std::vector<uint8_t>& data) {
+    return Fnv1a64(data.data(), data.size());
+}
+
 // 从 path 加载快照。文件不存在 / magic 错 / 读取越界 / 解码失败 → 返回 nullopt。
 // 注意：本函数不校验指纹（指纹校验由调用方对比 db 当前 mtime/size/digest 决定），
 // 这里只负责「能否完整读出」。返回的 snapshot 含文件里记录的指纹供调用方比对。

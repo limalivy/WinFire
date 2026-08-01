@@ -164,6 +164,12 @@ void CFireTextService::MaybeReloadConfig() {
     lastConfigMtime_ = fad.ftLastWriteTime;
     FIRE_LOG(L"[WinFire] MaybeReloadConfig: config.json changed, reloading\n");
     LoadConfigFromDisk();
+    // 配置变更可能影响候选结果（code_mode/candidate_count/enable_word_input 等），
+    // 重新向 dictd 校验本地缓存策略与 token：dictd 实时 stat db mtime/size 并结合
+    // config 摘要算新 token，与上次不符即清空 DLL 本地 LRU。
+    if (dictService_) {
+        dictService_->ValidateCache();
+    }
 }
 
 void CFireTextService::InitEngine() {
@@ -188,6 +194,11 @@ void CFireTextService::InitEngine() {
         proxy->Handshake();
         FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake ready=%d took=%lums\n",
                  proxy->IsAvailable() ? 1 : 0, (unsigned long)(GetTickCount64() - tHs));
+        // 握手成功后校验本地缓存策略（dictd 裁决是否允许 + 当前 token）。紧随握手复用
+        // 同一管道连接，仅 Activate 时一次往返。
+        if (proxy->IsAvailable()) {
+            proxy->ValidateCache();
+        }
         dictService_ = std::move(proxy);
     }
 

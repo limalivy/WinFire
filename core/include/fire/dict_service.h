@@ -55,6 +55,11 @@ public:
     // 默认实现：本地实现（DictLocalImpl）无"恢复"概念，返回当前可用状态即可，
     // 故提供非纯虚默认实现，避免改动本地实现。
     virtual bool TryRecover() { return IsAvailable(); }
+
+    // ---- DLL 本地缓存校验（仅 DictIpcProxy 有意义）----
+    // 向后台校验本地候选缓存是否仍有效（Activate / 配置变更 / 重连后调用）。
+    // 默认空实现：本地实现（DictLocalImpl）直接查库，无 DLL 层缓存概念，no-op。
+    virtual void ValidateCache() {}
 };
 
 }  // namespace fire

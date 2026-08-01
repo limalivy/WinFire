@@ -290,6 +290,60 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
             if (dict_) SaveCacheAsync(req.app_id);
             return MsgType::SaveCache;  // 异步，无响应
         }
+        case MsgType::CacheValidate: {
+            CacheValidateRequest req = decode_cache_validate_request(r);
+            (void)req;
+            CacheValidateResponse resp;
+            // 策略位：开启动态调频时禁止 DLL 启用本地缓存（候选顺序会被调频记忆改变，
+            // 缓存会返回旧顺序）。裁决权下放给 dictd，DLL 不自行读 config 判断，
+            // 避免沙箱进程读不到 config 或多份 config 状态不一致（参见 RecordStat
+            // 已用 dictd config 覆盖客户端值的先例）。
+            resp.allow_dll_cache = !config_.enable_dynamic_frequency;
+            // token 综合指纹：实时 stat db mtime/size + ConfigDigest + user_cache_generation。
+            // 实时 stat（不依赖 DictManager 内部 db_fingerprint_*）以捕获「外部刚改库、
+            // 还没人查询」窗口，避免给出「未变」的假阴性让 DLL 误判缓存仍有效。
+            // DLL 仅比较 token 相等性，不解析内部，故算法可演进无需版本协商。
+            if (dict_ && dict_->is_open()) {
+                std::error_code ec;
+                uint64_t mtime = 0, size = 0;
+                if (!config_.db_path.empty()) {
+                    auto mt = std::filesystem::last_write_time(
+                        std::filesystem::u8path(config_.db_path), ec);
+                    if (!ec) mtime = static_cast<uint64_t>(
+                        mt.time_since_epoch().count());
+                    auto sz = std::filesystem::file_size(
+                        std::filesystem::u8path(config_.db_path), ec);
+                    if (!ec) size = static_cast<uint64_t>(sz);
+                }
+                uint32_t cdigest = fire::query_cache_store::ConfigDigest(
+                    static_cast<int>(config_.code_mode),
+                    config_.candidate_count, config_.enable_word_input);
+                uint64_t user_gen = dict_->user_cache_generation();
+                // 小端字节拼接（与 wire 编码一致），FNV-1a64 压成单 u64。
+                auto put_u64_le = [](std::vector<uint8_t>& b, uint64_t v) {
+                    for (int i = 0; i < 8; ++i) b.push_back(
+                        static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+                };
+                auto put_u32_le = [](std::vector<uint8_t>& b, uint32_t v) {
+                    for (int i = 0; i < 4; ++i) b.push_back(
+                        static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+                };
+                std::vector<uint8_t> buf;
+                buf.reserve(8 + 8 + 4 + 8);
+                put_u64_le(buf, mtime);
+                put_u64_le(buf, size);
+                put_u32_le(buf, cdigest);
+                put_u64_le(buf, user_gen);
+                resp.token = fire::query_cache_store::Fnv1a64(buf);
+            } else {
+                // dictd 未就绪：token=0（DLL 见 0 即禁用缓存，避免命中过期结果）。
+                resp.token = 0;
+                resp.allow_dll_cache = false;
+            }
+            responsePayload = encode_cache_validate_response(resp);
+            needResponse = true;
+            return MsgType::CacheValidate;
+        }
         default: {
             ErrorMessage err;
             err.code = -1;

@@ -138,6 +138,16 @@ uint32_t ConfigDigest(int code_mode, int candidate_count, bool enable_word_input
     return h;
 }
 
+uint64_t Fnv1a64(const uint8_t* data, size_t len) {
+    // FNV-1a 64bit：offset basis 0xcbf29ce484222325，prime 0x100000001b3。
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < len; ++i) {
+        h ^= data[i];
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
 std::optional<CacheStoreSnapshot> Load(const std::string& path) {
     std::error_code ec;
     if (!std::filesystem::exists(std::filesystem::u8path(path), ec)) return std::nullopt;

@@ -19,7 +19,7 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - **原生 COM**：TSF TIP 使用 ATL 纯原生 COM，不依赖 .NET / WPF / Electron，加载到任意宿主进程（QQ / Word / Chrome…）都能稳定工作。
 - **静态链接**：fire_tsf.dll / fire_config.exe / fire_dictd.exe 均静态链接 CRT（fire_tsf 另链接 ATL），避免与宿主进程的 CRT 版本冲突；fire_config.exe 不再依赖 MFC，安装包体积显著缩小。fire_tsf.dll 已移除 SQLite 依赖（查字/统计完全经 IPC 转发给 fire_dictd.exe 后台进程），DLL 体积进一步减小约 1MB。
 - **数据隔离**：程序文件在 `%ProgramFiles%\WinFire\`，用户数据在 `%APPDATA%\WinFire\`，卸载默认保留用户数据。
-- **查字进程分离**：TSF DLL 加载进 AppContainer 沙箱进程（SearchHost.exe / UWP）时无权读写用户数据目录，故所有查库/统计下沉到正常完整性级别的后台进程 `fire_dictd.exe`，DLL 经命名管道 IPC 转发。后台空闲约 10 分钟自动退出，由 DLL 在首次查询时按需拉起。
+- **查字进程分离**：TSF DLL 加载进 AppContainer 沙箱进程（SearchHost.exe / UWP）时无权读写用户数据目录，故所有查库/统计下沉到正常完整性级别的后台进程 `fire_dictd.exe`，DLL 经命名管道 IPC 转发。DLL 层维护本地 LRU 候选缓存（cap=1000），通过 `CacheValidate` IPC 协议由 dictd 裁决有效性，热路径命中缓存时 0 次 IPC 往返。后台空闲约 10 分钟自动退出，由 DLL 在首次查询时按需拉起。
 
 ## 当前程序功能
 
@@ -119,12 +119,15 @@ CMake 选项（默认 ON）：`BUILD_CORE` / `BUILD_TESTS` / `BUILD_TABLEBUILDER
 ```
 winFire/
 ├── core/                       # 跨平台内核（纯 C++17，不依赖 Windows / macOS API）
-│   ├── include/fire/           # 公开头文件
+│   ├── include/fire/           # 公开头文件（含 dict_service.h / query_cache_store.h 等）
+│   └── src/                    # 实现
+├── ipc/                        # 查字进程分离 IPC 协议（纯 C++17，跨平台，入 CMake 可测）
+│   ├── include/fire/ipc/       # 帧协议 + 消息编解码 + 二进制读写
 │   └── src/                    # 实现
 ├── tablebuilder/               # 码表 txt -> sqlite 构建工具
-├── tests/                      # 内核单元测试
+├── tests/                      # 内核单元测试（含 IPC 协议编解码）
 ├── windows/                    # Windows 平台层
-│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 fire_tsf.rc 图标资源）
+│   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient）
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
 │   ├── config/                 # 纯 Win32 配置界面（fire_config.exe）
 │   ├── dictd/                  # 后台查字进程（fire_dictd.exe，命名管道 server + SQLite）

@@ -44,7 +44,8 @@ winFire/
 │   │   ├── input_mode_cache.h  # 按应用输入模式 LRU 缓存      <- InputModeCache.swift
 │   │   ├── statistics.h        # 输入统计（SQLite）           <- Utils/Statistics.swift
 │   │   ├── dict_service.h      # 查字/统计抽象接口 IDictService（本地/IPC 两种实现）
-│   │   └── dict_local_impl.h   # IDictService 本地实现（直接持 DictManager+Statistics）
+│   │   ├── dict_local_impl.h   # IDictService 本地实现（直接持 DictManager+Statistics）
+│   │   └── query_cache_store.h # LRU 缓存单文件快照 Load/Save/Remove + FNV-1a 哈希
 │   └── src/                    # 对应实现
 ├── ipc/                        # 查字进程分离 IPC 协议（纯 C++17，跨平台，入 CMake 可测）
 │   ├── include/fire/ipc/
@@ -128,7 +129,9 @@ spaceKey -> punctuation
 
 ### 4.4 词库 DictManager
 - `wb_py_dict(id, wbcode, text, type, query)`，`query glob :queryLike` 前缀匹配（`PRAGMA case_sensitive_like=ON`）。
-- 1-3 码首屏结果走 LRU 缓存（countLimit=5000）。
+- 1-3 码首屏结果走 LRU 缓存（countLimit=5000，`list<pair> + map<iterator>` 实现，O(1) 提升/淘汰）。
+- 内存 LRU 支持持久化快照：构造时从 `query_cache.bin` 加载上次会话积累，析构时全量写回（`SaveCacheStore`/`LoadCacheStore`）；数据库变更时整体删除（`clear_query_cache` 收口）。
+- 每次 `clear_query_cache()` 递增 `user_cache_generation_` 代次，供 dictd 纳入 CacheValidate token 计算，DLL 据此失效本地缓存。
 - `query.count >= 4` 时应用动态调频（把记忆的首选提到第一位）。
 - 反引号 + 拼音反查形码；`;` 前缀临时英文占位候选。
 
@@ -164,7 +167,8 @@ spaceKey -> punctuation
   version u16=1 / msg_type u16 / request_id u32 / payload_len u32）+ 手写小端二进制 payload
   （`Writer/Reader`，越界检查）。MsgType：`0x01` Hello、`0x02` QueryCandidates、`0x03`
   ReverseLookup、`0x04` RememberFreq、`0x05` SetCandidateFirst、`0x06` PrependCandidate、
-  `0x07` GetUserCandidates、`0x08` RecordStat、`0x09` Reinit、`0xFF` Error。
+  `0x07` GetUserCandidates、`0x08` RecordStat、`0x09` Reinit、`0x0A` SaveCache、
+  `0x0B` CacheValidate、`0xFF` Error。
 - **传输**：命名管道 `\\.\pipe\WinFire_Dict_<会话id>`（`PIPE_TYPE_MESSAGE`），SDDL
   `D:(A;;GRGW;;;WD)(A;;GRGW;;;AC)S:(ML;;NW;;;LW)` 放开 AppContainer + 低 IL 访问。
   server/client 均用 `FILE_FLAG_OVERLAPPED` 创建，所有读写走 overlapped + 超时。
@@ -176,6 +180,14 @@ spaceKey -> punctuation
   连不上会尝试 `CreateProcessW` 拉起同目录 `fire_dictd.exe` 并重试（非沙箱场景兜底）。
 - **数据路径与权限**：安装时 `icacls "{app}" /grant *S-1-15-2-1:(OI)(CI)(RX) /T`（授予
   ALL APPLICATION PACKAGES 读/执行）；后台以正常 IL 读写用户数据库，绕开沙箱写限制。
+- **DLL 本地候选缓存（CacheValidate 协议）**：DLL 端 `DictIpcProxy` 维护一个 DLL 层本地 LRU
+  缓存（`dll_cache_lru_`/`dll_cache_map_`，cap=1000），`GetCandidates` 热路径先命中本地缓存
+  则 0 次 IPC 往返直接返回。缓存有效性由 `CacheValidate`（`0x0B`）IPC 请求校验：dictd 实时
+  stat db 文件 mtime/size + ConfigDigest + `user_cache_generation`，FNV-1a64 压成单 u64 token；
+  DLL 仅比较 token 相等性（不解析内部，算法可演进）。`allow_dll_cache` 由 dictd 裁决
+ （开启动态调频时禁止，因候选顺序会变），DLL 不自行读 config 判断，避免沙箱进程读不到配置
+  或多实例状态不一致。缓存失效时机覆盖：Activate 握手后、配置热加载后、重连后；通信失败时
+  保守禁用并清空，不冒风险。
 
 ## 5. 构建与验证
 
@@ -304,6 +316,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   `GetFileAttributesExW`（mtime 检查），mtime 变化才真正 `LoadConfigFromDisk`。`InputEngine`/
   `PunctuationConverter` 持 `config_` 引用，就地更新即可见，无需重建。权衡：改完配置最多等 60s
   （下次打字）生效，换取快速打字时不每键 stat。
+- **DLL 本地缓存校验**：`InitEngine` 握手成功后调用 `DictIpcProxy::ValidateCache()` 获取 dictd
+  的 token 与缓存策略；`MaybeReloadConfig` 配置变更后也调用 `ValidateCache()`，使 dictd 重新
+  计算 token（含 ConfigDigest），DLL 据此清空本地 LRU 缓存，避免命中旧配置下的候选结果。
 - **SEH 崩溃保护**：`ActivateEx` 通过 `InitEngineSafe()`（`__try/__except` 包裹 `InitEngine`）
   防止引擎初始化崩溃导致宿主进程（QQ/Word/Chrome…）整体挂掉；崩溃时记录日志并返回 `E_FAIL`，
   宿主进程会优雅降级为不加载输入法。

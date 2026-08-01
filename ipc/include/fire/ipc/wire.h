@@ -28,6 +28,7 @@ public:
     void put_u8(uint8_t v);
     void put_u16(uint16_t v);
     void put_u32(uint32_t v);
+    void put_u64(uint64_t v);
     void put_i32(int32_t v);
     void put_i64(int64_t v);
     void put_string(const std::string& s);
@@ -52,6 +53,7 @@ public:
     uint8_t  get_u8();
     uint16_t get_u16();
     uint32_t get_u32();
+    uint64_t get_u64();
     int32_t  get_i32();
     int64_t  get_i64();
     std::string get_string();

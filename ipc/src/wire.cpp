@@ -21,6 +21,12 @@ void Writer::put_u32(uint32_t v) {
     buf_.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
 }
 
+void Writer::put_u64(uint64_t v) {
+    for (int i = 0; i < 8; ++i) {
+        buf_.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+    }
+}
+
 void Writer::put_i32(int32_t v) { put_u32(static_cast<uint32_t>(v)); }
 
 void Writer::put_i64(int64_t v) {
@@ -89,6 +95,16 @@ uint32_t Reader::get_u32() {
                  (static_cast<uint32_t>(data_[pos_ + 3]) << 24);
     pos_ += 4;
     return v;
+}
+
+uint64_t Reader::get_u64() {
+    if (!ensure(8)) return 0;
+    uint64_t u = 0;
+    for (int i = 0; i < 8; ++i) {
+        u |= static_cast<uint64_t>(data_[pos_ + i]) << (i * 8);
+    }
+    pos_ += 8;
+    return u;
 }
 
 int32_t Reader::get_i32() { return static_cast<int32_t>(get_u32()); }
