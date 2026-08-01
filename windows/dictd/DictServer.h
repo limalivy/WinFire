@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "fire/config.h"
@@ -48,6 +49,12 @@ private:
     std::unique_ptr<fire::DictManager> dict_;
     std::unique_ptr<fire::Statistics> stats_;
     std::mutex mu_;  // 串行化对 dict_/stats_ 的访问
+
+    // SaveCache 节流：上次落盘时刻。DLL Deactivate 会频繁触发，限 1 分钟最多写一次。
+    // 注意：Deactivate 不保证保存成功（daemon 可能已退出/被强杀），此处仅尽力而为。
+    ULONGLONG last_cache_save_tick_ = 0;
+    // 在子线程落盘 LRU 快照（不阻塞 ServeConnection）：持锁取快照→释放锁→写文件。
+    void SaveCacheAsync(const std::string& source_app_id);
 };
 
 }  // namespace firewin

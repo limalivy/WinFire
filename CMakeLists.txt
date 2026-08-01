@@ -52,6 +52,7 @@ if(BUILD_CORE)
         core/src/key_event.cpp
         core/src/punctuation.cpp
         core/src/dict_manager.cpp
+        core/src/query_cache_store.cpp
         core/src/dict_local_impl.cpp
         core/src/input_engine.cpp
         core/src/input_mode_cache.cpp
@@ -90,6 +91,7 @@ if(BUILD_TESTS AND BUILD_CORE)
         tests/test_engine.cpp
         tests/test_input_mode_cache.cpp
         tests/test_statistics.cpp
+        tests/test_query_cache.cpp
         tests/test_ipc_protocol.cpp
     )
     target_include_directories(fire_tests PRIVATE tests)

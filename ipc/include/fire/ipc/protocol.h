@@ -38,6 +38,7 @@ enum class MsgType : uint16_t {
     GetUserCandidates  = 0x07,
     RecordStat         = 0x08,
     Reinit             = 0x09,
+    SaveCache          = 0x0A,  // DLL Deactivate 时触发 daemon 落盘 LRU 快照（异步）
     Error              = 0xFF,
 };
 
@@ -119,6 +120,14 @@ struct RecordStatRequest {
 };
 std::vector<uint8_t> encode_record_stat(const RecordStatRequest& req);
 RecordStatRequest decode_record_stat(Reader& r);
+
+// SaveCache 请求：触发源 app_id（仅用于日志，不保证保存成功，daemon 带 1 分钟节流）。
+// DLL Deactivate 时 fire-and-forget 发送，不等响应。
+struct SaveCacheRequest {
+    std::string app_id;  // 触发来源宿主进程名
+};
+std::vector<uint8_t> encode_save_cache_request(const SaveCacheRequest& req);
+SaveCacheRequest decode_save_cache_request(Reader& r);
 
 // Error 响应：i32 code, str message
 struct ErrorMessage {

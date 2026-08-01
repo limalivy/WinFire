@@ -39,6 +39,12 @@ public:
                                  bool enable_stats,
                                  bool enable_hanzi) = 0;
 
+    // ---- LRU 缓存落盘（异步，fire-and-forget）----
+    // 通知后台尽快把内存 LRU 快照写到持久文件。Deactivate 时触发，使本次会话的
+    // 缓存积累即使 daemon 后续被强杀也已落盘。不保证保存成功；后台带节流。
+    // 默认空实现：本地实现（DictLocalImpl）无持久化，no-op。
+    virtual void SaveCache(const std::string& app_id) { (void)app_id; }
+
     // ---- 状态 ----
     // 后台可用 / 本地 DB 打开成功。为 false 时引擎应降级透传。
     virtual bool IsAvailable() const = 0;

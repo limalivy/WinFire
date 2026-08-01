@@ -161,6 +161,19 @@ RecordStatRequest decode_record_stat(Reader& r) {
     return req;
 }
 
+// ---- SaveCache ----
+std::vector<uint8_t> encode_save_cache_request(const SaveCacheRequest& req) {
+    Writer w;
+    w.put_string(req.app_id);
+    return w.take();
+}
+
+SaveCacheRequest decode_save_cache_request(Reader& r) {
+    SaveCacheRequest req;
+    req.app_id = r.get_string();
+    return req;
+}
+
 // ---- Error ----
 std::vector<uint8_t> encode_error(const ErrorMessage& err) {
     Writer w;

@@ -43,6 +43,7 @@ public:
                          const std::vector<std::string>& hanzi_parts,
                          bool enable_stats,
                          bool enable_hanzi) override;
+    void SaveCache(const std::string& app_id) override;
     bool IsAvailable() const override { return available_; }
 
     // 可用性恢复：当 available_ 失效（连接超时/握手失败）后，由按键热路径周期性

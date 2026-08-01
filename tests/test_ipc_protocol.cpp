@@ -162,6 +162,16 @@ TEST_CASE(ipc_freq_request_roundtrip) {
     CHECK(got.candidate == req.candidate);
 }
 
+TEST_CASE(ipc_save_cache_request_roundtrip) {
+    SaveCacheRequest req;
+    req.app_id = "chrome.exe";
+    auto payload = encode_save_cache_request(req);
+    Reader r(payload);
+    SaveCacheRequest got = decode_save_cache_request(r);
+    CHECK(r.ok());
+    CHECK_STR_EQ(got.app_id, "chrome.exe");
+}
+
 TEST_CASE(ipc_record_stat_roundtrip) {
     RecordStatRequest req;
     req.candidate = Candidate("gghh", "五目", CandidateType::Wb);

@@ -7,6 +7,7 @@
 #include "../common/IpcShared.h"
 #include "../config/ConfigStore.h"
 
+#include "fire/query_cache_store.h"
 #include "fire/types.h"
 
 namespace firewin {
@@ -151,6 +152,18 @@ bool DictServer::Init() {
     DLOG(L"Init: DictManager ctor (sqlite open) took %lu ms, is_open=%d\n",
          (unsigned long)(GetTickCount64() - tC), (newDict && newDict->is_open()) ? 1 : 0);
 
+    // 持久化 LRU 缓存快照：从 <userDataDir>/query_cache.bin 恢复上次会话的 1-3 码
+    // 首屏缓存。不依赖 sqlite 打开，加载后内存 LRU 立即可用，使前几次查询可在
+    // sqlite 尚未热起来时也命中。指纹不符（db 已变/配置已变）则整体丢弃。
+    if (newDict && newDict->is_open() && !config_.db_path.empty()) {
+        std::wstring cachePathW = firecfg::GetConfigDir() + L"\\query_cache.bin";
+        std::string cachePath = WideToUtf8(cachePathW);
+        ULONGLONG tLoad = GetTickCount64();
+        newDict->SetCacheStorePath(cachePath);
+        DLOG(L"Init: cache store load took %lu ms (path=%s)\n",
+             (unsigned long)(GetTickCount64() - tLoad), cachePathW.c_str());
+    }
+
     // 统计库始终打开（后台负责所有宿主的写入；具体是否写由请求内的开关决定）。
     ULONGLONG tD = GetTickCount64();
     auto newStats = std::make_unique<fire::Statistics>(config_.stats_db_path);
@@ -270,6 +283,13 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
             if (dict_) dict_->reinit();
             return MsgType::Reinit;  // 异步，无响应
         }
+        case MsgType::SaveCache: {
+            SaveCacheRequest req = decode_save_cache_request(r);
+            // 异步落盘：1 分钟节流 + 子线程保存（不阻塞 ServeConnection）。
+            // Deactivate 触发，不保证保存成功（daemon 可能即将退出）。
+            if (dict_) SaveCacheAsync(req.app_id);
+            return MsgType::SaveCache;  // 异步，无响应
+        }
         default: {
             ErrorMessage err;
             err.code = -1;
@@ -279,6 +299,34 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
             return MsgType::Error;
         }
     }
+}
+
+void DictServer::SaveCacheAsync(const std::string& source_app_id) {
+    // 注意：本函数由 HandleRequest 调用，调用方已持有 mu_（std::mutex 不可重入），
+    // 故此处直接在当前线程（已持锁）取快照，不再加锁。取快照是微秒级拷贝 LRU + 指纹。
+    ULONGLONG now = GetTickCount64();
+    if (last_cache_save_tick_ != 0 && now - last_cache_save_tick_ < 60000) {
+        DLOG(L"SaveCacheAsync: throttled (last save %lums ago, source='%hs')\n",
+             (unsigned long)(now - last_cache_save_tick_), source_app_id.c_str());
+        return;
+    }
+
+    std::string path = dict_ ? dict_->cache_store_path() : std::string{};
+    if (path.empty() || !dict_) return;
+
+    // 持锁（当前线程已持）取一致性快照，拷贝出值类型数据。
+    fire::CacheStoreSnapshot snap;
+    if (!dict_->SnapshotCacheStore(snap)) return;  // LRU 为空/未启用持久化
+    last_cache_save_tick_ = now;
+
+    // detached 子线程只做文件 IO（按值捕获 path + snap，不捕获 this，避免 UAF）。
+    std::thread([path = std::move(path), snap = std::move(snap), source_app_id]() {
+        ULONGLONG t = GetTickCount64();
+        fire::query_cache_store::Save(path, snap);
+        DLOG(L"SaveCacheAsync: saved %zu entries in %lums (source='%hs')\n",
+             snap.entries.size(), (unsigned long)(GetTickCount64() - t),
+             source_app_id.c_str());
+    }).detach();
 }
 
 void DictServer::ServeConnection(HANDLE pipe) {

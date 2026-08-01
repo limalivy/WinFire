@@ -163,4 +163,12 @@ void DictIpcProxy::RecordCandidate(const fire::Candidate& candidate, const std::
     client_.SendAsync(MsgType::RecordStat, encode_record_stat(req));
 }
 
+void DictIpcProxy::SaveCache(const std::string& app_id) {
+    // Deactivate 时触发：fire-and-forget，不等回复。daemon 收到后带 1 分钟节流 +
+    // 子线程落盘。即使这次没真存（daemon 不可用/被强杀），DLL 不在乎——不保证成功。
+    SaveCacheRequest req;
+    req.app_id = app_id;
+    client_.SendAsync(MsgType::SaveCache, encode_save_cache_request(req));
+}
+
 }  // namespace firewin

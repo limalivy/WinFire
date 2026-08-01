@@ -13,6 +13,7 @@
 
 #include "fire/candidate.h"
 #include "fire/config.h"
+#include "fire/query_cache_store.h"  // CacheStoreSnapshot（SnapshotCacheStore 用）
 
 struct sqlite3;
 struct sqlite3_stmt;
@@ -57,9 +58,34 @@ public:
 
     char temp_en_trigger() const { return config_.temp_en_trigger; }
 
+    // 设置持久化缓存文件路径（如 <userDataDir>/query_cache.bin）。
+    // 非空时：构造时从该文件加载上次会话的 1-3 码首屏缓存；析构时全量快照写回；
+    // 数据库变更（reinit/prepend/update_user_dict）时整体删除失效。
+    // 必须在构造后、首次查询前调用（构造函数已尝试加载，路径若此时为空则跳过）。
+    // 注意：构造时路径未知，故采用「构造时不加载 + 本方法触发加载」的顺序。
+    void SetCacheStorePath(const std::string& path);
+
+    // 把当前内存 LRU + 指纹快照到 out（供外部在持锁后调用，分离「取快照」与「写文件」
+    // 两步：取快照在锁内微秒级，写文件在锁外避免阻塞 ServeConnection）。
+    // 返回是否有数据可存（path 非空且 LRU 非空）。
+    bool SnapshotCacheStore(fire::CacheStoreSnapshot& out);
+
+    // 持久化缓存文件路径（供 daemon 持有以便子线程写文件）。
+    const std::string& cache_store_path() const { return cache_store_path_; }
+
 private:
     Config& config_;
     sqlite3* db_ = nullptr;
+
+    // 持久化 LRU 缓存快照。空字符串=不持久化（如内核测试）。
+    std::string cache_store_path_;
+    // 加载快照时记录的 db 指纹（mtime 计数 + 文件大小），用于运行中校验是否仍一致。
+    int64_t db_fingerprint_mtime_ = 0;
+    int64_t db_fingerprint_size_ = 0;
+    // 加载持久快照：校验指纹（db mtime/size/config 摘要）后把条目填进内存 LRU。
+    void LoadCacheStore();
+    // 把当前内存 LRU 全量快照写文件（析构时调用）。
+    void SaveCacheStore();
 
     // 首屏 1-3 码查询缓存（LRU）
     struct CacheEntry {

@@ -320,6 +320,11 @@ STDMETHODIMP CFireTextService::Deactivate() {
         threadMgrCookie_ = TF_INVALID_COOKIE;
     }
     FIRE_LOG(L"[WinFire] Deactivate: destroying resources\n");
+    // 通知后台尽快落盘本次会话积累的 LRU 缓存（fire-and-forget，不等回复）。
+    // daemon 带 1 分钟节流，即使没存也不影响退出。在 engine_/dictService_ 销毁前发。
+    if (dictService_) {
+        dictService_->SaveCache(currentAppId_);
+    }
     if (candWindow_) candWindow_->Destroy();
     engine_.reset();
     dictService_.reset();

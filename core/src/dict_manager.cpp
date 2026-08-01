@@ -76,15 +76,46 @@ std::string utf8_take_suffix(const std::string& s, size_t n) {
 
 DictManager::DictManager(Config& config) : config_(config) {
     prepare_statement();
+    // 修正现有 bug：last_db_mtime_ 默认构造为 epoch，导致首次 check_db_changed 必然
+    // 触发一次多余的 reinit（刚 open 的 db 被 close 再 open）。此处立即初始化为当前
+    // db mtime，避免首次查询的无谓 reinit + stmt 缓存被清空。
+    if (db_ && !config_.db_path.empty()) {
+        std::error_code ec;
+        auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
+        if (!ec) {
+            last_db_mtime_ = mtime;
+            db_fingerprint_mtime_ =
+                static_cast<int64_t>(mtime.time_since_epoch().count());
+            std::error_code sec;
+            auto sz = std::filesystem::file_size(config_.db_path, sec);
+            if (!sec) db_fingerprint_size_ = static_cast<int64_t>(sz);
+        }
+    }
 }
 
 DictManager::~DictManager() {
+    // 先快照内存 LRU 到文件（若启用），再关 db。close()→clear_query_cache() 会删文件，
+    // 故必须在 close 之前 Save。强杀进程则不写——下次冷启动从空开始，无损。
+    SaveCacheStore();
     close();
 }
 
 void DictManager::reinit() {
-    close();
+    close();  // close→clear_query_cache 会失效文件缓存（db 要变了）
     prepare_statement();
+    // reinit 后更新指纹为新 db 的 mtime/size。
+    if (db_ && !config_.db_path.empty()) {
+        std::error_code ec;
+        auto mtime = std::filesystem::last_write_time(config_.db_path, ec);
+        if (!ec) {
+            last_db_mtime_ = mtime;
+            db_fingerprint_mtime_ =
+                static_cast<int64_t>(mtime.time_since_epoch().count());
+            std::error_code sec;
+            auto sz = std::filesystem::file_size(config_.db_path, sec);
+            if (!sec) db_fingerprint_size_ = static_cast<int64_t>(sz);
+        }
+    }
 }
 
 void DictManager::close() {
@@ -147,6 +178,12 @@ void DictManager::prepare_statement() {
 void DictManager::clear_query_cache() {
     cache_map_.clear();
     cache_lru_.clear();
+    // 集中失效点：内存 LRU 清空时，持久快照文件也一并删除。
+    // 所有 db 变更路径（reinit→close、prepend_candidate、prepend_candidates、
+    // update_user_dict）都经此收口，保证文件缓存与当前 db 一致。
+    if (!cache_store_path_.empty()) {
+        query_cache_store::Remove(cache_store_path_);
+    }
 }
 
 void DictManager::check_db_changed() {
@@ -590,6 +627,68 @@ std::string DictManager::get_user_dict_content() {
         for (const auto& t : list[i].texts) oss << " " << t;
     }
     return oss.str();
+}
+
+// ---- 持久化 LRU 缓存快照 ----
+
+void DictManager::SetCacheStorePath(const std::string& path) {
+    cache_store_path_ = path;
+    LoadCacheStore();
+}
+
+void DictManager::LoadCacheStore() {
+    if (cache_store_path_.empty()) return;
+    auto snap = query_cache_store::Load(cache_store_path_);
+    if (!snap) return;  // 文件不存在/损坏/读失败：内存从空开始，无碍
+    // 指纹校验：文件记录的 db mtime/size/config 摘要必须与当前一致，否则整体丢弃。
+    uint32_t digest = query_cache_store::ConfigDigest(
+        static_cast<int>(config_.code_mode), config_.candidate_count,
+        config_.enable_word_input);
+    if (snap->db_mtime != db_fingerprint_mtime_ ||
+        snap->db_size != db_fingerprint_size_ ||
+        snap->config_digest != digest) {
+        // 指纹不符（db 已变 / 配置已变）：删除过期文件，内存从空开始。
+        query_cache_store::Remove(cache_store_path_);
+        return;
+    }
+    // 填充内存 LRU（受 kCacheLimit 约束）。
+    for (auto& e : snap->entries) {
+        if (cache_map_.size() >= kCacheLimit) break;
+        CacheEntry ce;
+        ce.candidates = std::move(e.candidates);
+        ce.has_next = e.has_next;
+        cache_map_[e.key] = ce;
+        cache_lru_.push_front(e.key);
+    }
+}
+
+void DictManager::SaveCacheStore() {
+    // 析构路径：取快照 + 写文件都在本线程（对象即将销毁，无需并发）。
+    fire::CacheStoreSnapshot snap;
+    if (!SnapshotCacheStore(snap)) return;
+    query_cache_store::Save(cache_store_path_, snap);
+}
+
+bool DictManager::SnapshotCacheStore(fire::CacheStoreSnapshot& snap) {
+    if (cache_store_path_.empty() || cache_map_.empty()) return false;
+    snap.db_mtime = db_fingerprint_mtime_;
+    snap.db_size = db_fingerprint_size_;
+    snap.config_digest = query_cache_store::ConfigDigest(
+        static_cast<int>(config_.code_mode), config_.candidate_count,
+        config_.enable_word_input);
+    snap.entries.clear();
+    snap.entries.reserve(cache_map_.size());
+    // 按 LRU 新→旧顺序写入（cache_lru_ front 是最近访问）。
+    for (const auto& key : cache_lru_) {
+        auto it = cache_map_.find(key);
+        if (it == cache_map_.end()) continue;
+        CacheStoreEntry e;
+        e.key = key;
+        e.has_next = it->second.has_next;
+        e.candidates = it->second.candidates;  // 拷贝（调用方持锁，快照后即释放）
+        snap.entries.push_back(std::move(e));
+    }
+    return true;
 }
 
 }  // namespace fire
