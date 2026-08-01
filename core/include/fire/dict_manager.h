@@ -87,13 +87,16 @@ private:
     // 把当前内存 LRU 全量快照写文件（析构时调用）。
     void SaveCacheStore();
 
-    // 首屏 1-3 码查询缓存（LRU）
+    // 首屏 1-3 码查询缓存（LRU，O(1) 提升/淘汰）。
+    // 链表节点直接存 (key, value)，map 存 key→迭代器，提升用 list::splice（O(1)，
+    // 且不失效其它迭代器，故淘汰 victim 仍可由 back() 取得）。
     struct CacheEntry {
         std::vector<Candidate> candidates;
         bool has_next;
     };
-    std::unordered_map<std::string, CacheEntry> cache_map_;
-    std::list<std::string> cache_lru_;
+    using CacheList = std::list<std::pair<std::string, CacheEntry>>;
+    CacheList cache_lru_;  // front=MRU，back=LRU
+    std::unordered_map<std::string, CacheList::iterator> cache_map_;
     static constexpr size_t kCacheLimit = 5000;
 
     // 热路径查询语句缓存：以完整 SQL 文本为 key 复用已编译的 sqlite3_stmt*，

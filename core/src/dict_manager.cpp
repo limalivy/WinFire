@@ -197,26 +197,27 @@ void DictManager::refresh_db_fingerprint() {
 void DictManager::cache_put(const std::string& key, const CacheEntry& entry) {
     auto it = cache_map_.find(key);
     if (it != cache_map_.end()) {
-        it->second = entry;
-        cache_lru_.remove(key);
-        cache_lru_.push_front(key);
+        // 命中：更新值并提升到 front（splice O(1)，迭代器不失效）。
+        it->second->second = entry;
+        cache_lru_.splice(cache_lru_.begin(), cache_lru_, it->second);
         return;
     }
     if (cache_map_.size() >= kCacheLimit && !cache_lru_.empty()) {
-        std::string evict = cache_lru_.back();
+        // 满载淘汰 LRU（back），从链表与 map 同步删除。
+        auto victim = std::prev(cache_lru_.end());
+        cache_map_.erase(victim->first);
         cache_lru_.pop_back();
-        cache_map_.erase(evict);
     }
-    cache_map_[key] = entry;
-    cache_lru_.push_front(key);
+    cache_lru_.push_front({key, entry});
+    cache_map_[key] = cache_lru_.begin();
 }
 
 bool DictManager::cache_get(const std::string& key, CacheEntry& out) {
     auto it = cache_map_.find(key);
     if (it == cache_map_.end()) return false;
-    out = it->second;
-    cache_lru_.remove(key);
-    cache_lru_.push_front(key);
+    out = it->second->second;
+    // 提升到 front（splice O(1)）。
+    cache_lru_.splice(cache_lru_.begin(), cache_lru_, it->second);
     return true;
 }
 
@@ -654,11 +655,12 @@ void DictManager::LoadCacheStore() {
     // 与原顺序一致；push_front 会反转为 [N,...,1,0] → front=LRU，使淘汰 victim 错指最新条目。
     for (auto& e : snap->entries) {
         if (cache_map_.size() >= kCacheLimit) break;
+        if (cache_map_.find(e.key) != cache_map_.end()) continue;  // 去重：跳过磁盘重复 key
         CacheEntry ce;
         ce.candidates = std::move(e.candidates);
         ce.has_next = e.has_next;
-        cache_map_[e.key] = ce;
-        cache_lru_.push_back(e.key);
+        cache_lru_.push_back({e.key, std::move(ce)});
+        cache_map_[e.key] = std::prev(cache_lru_.end());
     }
 }
 
@@ -678,14 +680,12 @@ bool DictManager::SnapshotCacheStore(fire::CacheStoreSnapshot& snap) {
         config_.enable_word_input);
     snap.entries.clear();
     snap.entries.reserve(cache_map_.size());
-    // 按 LRU 新→旧顺序写入（cache_lru_ front 是最近访问）。
-    for (const auto& key : cache_lru_) {
-        auto it = cache_map_.find(key);
-        if (it == cache_map_.end()) continue;
+    // 按 LRU 新→旧顺序写入（cache_lru_ front 是最近访问）；节点直接存 key/value，无需查 map。
+    for (const auto& kv : cache_lru_) {
         CacheStoreEntry e;
-        e.key = key;
-        e.has_next = it->second.has_next;
-        e.candidates = it->second.candidates;  // 拷贝（调用方持锁，快照后即释放）
+        e.key = kv.first;
+        e.has_next = kv.second.has_next;
+        e.candidates = kv.second.candidates;  // 拷贝（调用方持锁，快照后即释放）
         snap.entries.push_back(std::move(e));
     }
     return true;
