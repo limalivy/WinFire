@@ -146,10 +146,11 @@ inline void FireLogDiagBannerOnce() {
 
 #endif // FIRE_DEBUG
 
-// Release 模式下 FireLogSetFsReady 为空操作，便于 TextService::Activate/Deactivate
-// 无条件调用，避免业务代码用 #ifdef 包裹
+// Release 模式下 FireLogSetFsReady / FireLogDiagBannerOnce 为空操作，便于
+// TextService::Activate/Deactivate 无条件调用，避免业务代码用 #ifdef 包裹
 #ifndef FIRE_DEBUG
 inline void FireLogSetFsReady(bool) {}
+inline void FireLogDiagBannerOnce() {}
 #endif
 
 }  // namespace firewin

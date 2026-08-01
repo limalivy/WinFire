@@ -57,6 +57,10 @@ inline void DictLogBannerOnce() {
              L"  pid=%lu =====\n", (unsigned long)GetCurrentProcessId());
 }
 
+#else
+// Release 模式下 DictLogBannerOnce 为空操作，便于 wmain 无条件调用，
+// 避免业务代码用 #ifdef 包裹（与下方 DLOG 宏的降级策略一致）。
+inline void DictLogBannerOnce() {}
 #endif // FIRE_DEBUG
 
 }  // namespace firewin
