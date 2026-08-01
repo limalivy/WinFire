@@ -1,5 +1,10 @@
 # WinFire — 微火五笔输入法 Windows 移植（移植自业火五笔 Fire）
 
+> **重要：本地 Agent 约束**  
+> 如果项目根目录下存在 `LOCAL_AGENTS.md`，所有 AI 工具在操作本项目代码前，
+> **必须先读取并遵循 `LOCAL_AGENTS.md` 中的全部约定**。该文件不纳入版本控制，
+> 由各开发者本地自行维护。
+
 将 macOS 上的「业火五笔输入法（Fire）」（Swift + InputMethodKit + SwiftUI + SQLCipher）
 重新实现到 Windows 平台。核心策略是**抽离平台无关内核**（状态机 + 词库），
 Windows 平台各层只做「宿主适配 + UI 渲染」。
