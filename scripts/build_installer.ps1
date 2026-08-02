@@ -102,6 +102,9 @@ if (-not (Test-Path $tablebuilder)) { throw "tablebuilder.exe not found after bu
 Write-Host "  [OK] $tablebuilder" -ForegroundColor Green
 
 # 拷贝到 staging，供 winfire.iss 打包进安装程序
+if (-not (Test-Path $StagingDir)) {
+    New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
+}
 Copy-Item $tablebuilder "$StagingDir\tablebuilder.exe" -Force
 Write-Host "  [OK] Copied to staging" -ForegroundColor Green
 
