@@ -174,6 +174,15 @@ Root: HKLM; Subkey: "Software\WinFire"; ValueType: string; \
   ValueName: "UserDataDir"; ValueData: "{userappdata}\WinFire"; \
   Flags: uninsdeletekey
 
+; fire_dictd.exe 开机自启动：系统重启后，SearchHost.exe 等 AppContainer 沙箱进程
+; 首次加载输入法时无权 CreateProcess 拉起后台。Run 键保证 dictd 随用户登录自启，
+; 沙箱进程首次输入即可经 IPC 查库出候选。Inno 的 HKCU 在 PrivilegesRequired=admin
+; 下指向运行安装程序的登录用户（非管理员账户），语义正确。
+; uninstall 时 uninsdeletevalue 自动清掉该值，无需在 [Code] 手动处理。
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
+  ValueType: string; ValueName: "WinFireDictd"; \
+  ValueData: """{app}\fire_dictd.exe"""; Flags: uninsdeletevalue
+
 ; ----------------------------------------------------------------------------
 ; 卸载完成后询问是否删除用户数据（config / 词库 / 统计）
 ; ----------------------------------------------------------------------------
@@ -270,7 +279,7 @@ end;
 // 后台进程为 in-process DLL 之外的独立 EXE，安装/升级/卸载前需先结束，
 // 否则其映像被占用导致 fire_dictd.exe 无法被覆盖或删除（虽有 restartreplace
 // 兜底，但主动结束可让新版立即生效、避免延迟到重启）。
-// 后台自身有空闲超时退出机制，结束后不会残留；新版安装完成会重新拉起。
+// dictd 改为常驻进程（不再空闲退出）；杀掉后本次会话不再重生，下次登录由 HKCU\Run 拉起。
 procedure KillDictd();
 var
   ResultCode: Integer;

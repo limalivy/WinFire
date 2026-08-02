@@ -47,8 +47,20 @@ if (Test-Path $regPath) {
     Write-Host "  [SKIP] Registry key not found" -ForegroundColor DarkGray
 }
 
+# 移除 dictd 自启动项（install.ps1 写 HKLM\Run；Inno 安装包写 HKCU\Run；两处都清保证干净）。
+foreach ($hive in @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run")) {
+    if (Get-ItemProperty -Path $hive -Name "WinFireDictd" -ErrorAction SilentlyContinue) {
+        Remove-ItemProperty -Path $hive -Name "WinFireDictd" -Force
+        Write-Host "  [OK] Removed $hive\WinFireDictd" -ForegroundColor Green
+    }
+}
+
 # 3. Remove program files
 Write-Host "[3/4] Removing program files..." -ForegroundColor Yellow
+
+# 结束常驻的后台查字进程（改常驻后不再空闲自退，必须主动杀以释放映像占用）。
+& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
 if (Test-Path $InstallDir) {
     # 先处理可能仍被宿主进程占用的 DLL：删不掉则标记重启后删除，避免整体删除失败。
     $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'

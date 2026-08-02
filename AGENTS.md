@@ -174,10 +174,14 @@ spaceKey -> punctuation
   server/client 均用 `FILE_FLAG_OVERLAPPED` 创建，所有读写走 overlapped + 超时。
   查询同步（20ms 超时，超时/失败即返回空结果并标记重连）；统计/调频/Reinit 异步
   fire-and-forget。
-- **后台生命周期**：单实例 mutex `Global\WinFire_Dictd_<会话id>`；空闲超时退出（每轮
-  30s，连续 20 轮约 10 分钟无连接自动退出）；由安装脚本/正常 IL 进程拉起（AppContainer
-  进程通常无权 CreateProcess，故不能只靠 DLL 端按需拉起）。DLL 端 `DictIpcProxy` 首次
-  连不上会尝试 `CreateProcessW` 拉起同目录 `fire_dictd.exe` 并重试（非沙箱场景兜底）。
+- **后台生命周期**：单实例 mutex `Global\WinFire_Dictd_<会话id>`；**常驻不退出**（原空闲
+  超时退出已移除，保证系统进程拉起场景下后台始终可用）；**开机自启动**——安装时写入
+  `HKCU\Run`（Inno 安装包，登录用户）或 `HKLM\Run`（install.ps1，全用户），值名
+  `WinFireDictd`，系统重启后随用户登录自启，使 SearchHost.exe 等 AppContainer 沙箱进程
+  首次输入即可经 IPC 查库出候选，不依赖沙箱进程无权的 CreateProcess。DLL 端 `DictIpcProxy`
+  首次连不上仍会尝试 `CreateProcessW` 拉起同目录 `fire_dictd.exe`（非沙箱场景兜底）；
+  dictd 意外死亡后 DLL 靠按键驱动的惰性自愈（`TryRecover`，1s 退避）重新拉起并适应。连接
+  处理线程异常隔离（try/catch），避免单连接异常 `std::terminate` 整个后台进程。
 - **数据路径与权限**：安装时 `icacls "{app}" /grant *S-1-15-2-1:(OI)(CI)(RX) /T`（授予
   ALL APPLICATION PACKAGES 读/执行）；后台以正常 IL 读写用户数据库，绕开沙箱写限制。
 - **DLL 本地候选缓存（CacheValidate 协议）**：DLL 端 `DictIpcProxy` 维护一个 DLL 层本地 LRU

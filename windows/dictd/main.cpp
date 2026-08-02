@@ -5,11 +5,13 @@
 //    - 全局命名 mutex 保证单实例（同一登录会话只跑一个后台）；
 //    - 构造 DictServer 并 Init()（正常 IL 打开词库/统计库）；
 //    - accept 循环：等待客户端连接，每连接起线程调 ServeConnection；
-//    - 空闲超时退出（长时间无连接自动结束，降低常驻开销）。
+//    - 常驻服务（不再空闲退出，保证系统进程拉起场景下后台始终可用）。
+//
+//  Windows GUI 子系统入口（wWinMain）：经 HKCU\Run / HKLM\Run 自启动或安装脚本拉起时，
+//  不弹控制台窗口。诊断日志走 OutputDebugStringW（DLOG），不依赖控制台。
 //
 #include <windows.h>
 
-#include <atomic>
 #include <thread>
 
 #include "DictLog.h"
@@ -17,28 +19,17 @@
 #include "NamedPipeServer.h"
 #include "../common/IpcShared.h"
 
-namespace {
-
-// 单次等待连接的超时（毫秒）。到点无连接则累计空闲，超过总空闲上限退出。
-constexpr DWORD kAcceptTimeoutMs = 30 * 1000;      // 每轮等待 30s
-constexpr int   kMaxIdleRounds   = 20;             // 连续空闲 20 轮（约 10 分钟）退出
-
-// 活动连接计数：有连接在服务时不因空闲退出。
-std::atomic<int> g_activeConnections{0};
-
-}  // namespace
-
-int wmain() {
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     firewin::DictLogBannerOnce();  // 打印版本横幅（每进程一次）
 
     // 单实例：同一会话若已有后台在跑则直接退出。
     HANDLE mutex = CreateMutexW(nullptr, TRUE, firewin::MakeDictdMutexName().c_str());
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        DLOG(L"wmain: another instance already running (mutex exists), exit\n");
+        DLOG(L"wWinMain: another instance already running (mutex exists), exit\n");
         CloseHandle(mutex);
         return 0;
     }
-    DLOG(L"wmain: singleton mutex acquired, starting\n");
+    DLOG(L"wWinMain: singleton mutex acquired, starting\n");
 
     firewin::DictServer server;
     // 异步初始化词库：冷启动时打开 sqlite（磁盘冷缓存）可能 >1s，
@@ -50,31 +41,25 @@ int wmain() {
     firewin::NamedPipeServer pipeServer;
     const std::wstring pipeName = firewin::MakeDictPipeName();
 
-    int idleRounds = 0;
     for (;;) {
         bool timedOut = false;
-        HANDLE pipe = pipeServer.WaitForConnection(pipeName, kAcceptTimeoutMs, timedOut);
+        // 常驻：永久等待连接，不因空闲退出。系统进程（SearchHost.exe 等）拉起输入法时
+        // 无权 CreateProcess，必须保证 dictd 始终在听管道，否则沙箱场景永远拉不起后台。
+        HANDLE pipe = pipeServer.WaitForConnection(pipeName, INFINITE, timedOut);
 
         if (pipe != INVALID_HANDLE_VALUE) {
-            idleRounds = 0;
-            int active = g_activeConnections.fetch_add(1) + 1;
-            DLOG(L"accept: client connected (active=%d), spawning ServeConnection\n", active);
+            DLOG(L"accept: client connected, spawning ServeConnection\n");
             std::thread([&server, pipe]() {
-                server.ServeConnection(pipe);
+                // detached 线程未捕获异常会 std::terminate 整个进程，连累 accept 主循环与
+                // 其他在服务的连接。这里捕获后仅结束本连接线程，主进程继续存活。
+                try {
+                    server.ServeConnection(pipe);
+                } catch (...) {
+                    DLOG(L"ServeConnection: exception caught, isolating this connection\n");
+                }
                 DLOG(L"ServeConnection: finished, disconnecting pipe\n");
                 CloseHandle(pipe);
-                g_activeConnections.fetch_sub(1);
             }).detach();
-            continue;
-        }
-
-        if (timedOut) {
-            // 仅在无活动连接时累计空闲；有连接在服务则保持存活。
-            if (g_activeConnections.load() == 0) {
-                if (++idleRounds >= kMaxIdleRounds) break;
-            } else {
-                idleRounds = 0;
-            }
             continue;
         }
 

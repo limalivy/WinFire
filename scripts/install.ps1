@@ -269,6 +269,14 @@ try {
     Pop-Location
 }
 
+# 写入 HKLM\Run 自启动键：系统重启后 dictd 随任意用户登录自启，沙箱进程首次输入即可出候选。
+# 用 HKLM（而非 HKCU）是因为本脚本以 #Requires -RunAsAdministrator 运行，提权上下文里 HKCU
+# 指向管理员账户而非实际登录用户；HKLM\Run 对所有用户生效，避开此陷阱。Inno 安装包则用 HKCU\Run。
+$runKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+if (-not (Test-Path $runKey)) { New-Item -Path $runKey -Force | Out-Null }
+New-ItemProperty -Path $runKey -Name "WinFireDictd" -Value "$InstallDir\fire_dictd.exe" -PropertyType String -Force | Out-Null
+Write-Host "  [OK]   Added HKLM\Run autostart for fire_dictd.exe" -ForegroundColor Green
+
 # 立即拉起后台查字进程（正常 IL），使沙箱进程首次输入即可出候选，
 # 无需等 DLL 端按需拉起（AppContainer 进程通常无权 CreateProcess）。
 Start-Process -FilePath "$InstallDir\fire_dictd.exe" -WindowStyle Hidden

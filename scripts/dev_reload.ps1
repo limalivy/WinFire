@@ -281,6 +281,9 @@ if ($LASTEXITCODE -eq 0) {
 # ERROR_SHARING_VIOLATION（"being used by another process"）；重试几次即可。
 # 注意：即使这里启动失败也无妨——DLL 端 DictIpcProxy 首次连不上时会自行
 # CreateProcessW 拉起同目录 fire_dictd.exe（非沙箱场景兜底，§4.8）。
+# dev_reload 不写自启注册项（避免污染开发环境）；正式自启由 install.ps1
+# (HKLM\Run) / winfire.iss (HKCU\Run) 写入。本脚本拉起的实例在本次会话常驻
+# （dictd 不再空闲退出），重启后由正式安装的 Run 键接管。
 $dictdStarted = $false
 for ($i = 0; $i -lt 10; $i++) {
     try {
