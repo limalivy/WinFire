@@ -1,13 +1,16 @@
 # ============================================================================
 # WinFire Installer Build — GitHub Actions
 #
-# 触发条件：仅当 VERSION.default 文件发生变化时，自动生成安装包。
-# 也可通过 workflow_dispatch 手动触发（用于测试）。
+# 触发条件：
+#   1. VERSION.default 文件变更时自动构建并发布 Release
+#   2. 手动触发（workflow_dispatch），需手动填写版本号
 #
 # 流程：
-#   1. 安装 Inno Setup 6（choco）
-#   2. 执行 scripts/build_installer.ps1（编译 VS 工程 + 构建词库 + 打包）
-#   3. 上传 dist\WinFire-Setup.exe 到 Actions Artifact
+#   1. 确定版本号（自动触发时从 VERSION.default 读取，手动触发时取用户输入）
+#   2. 安装 Inno Setup 6
+#   3. 执行 scripts/build_installer.ps1（编译 VS 工程 + 构建词库 + 打包）
+#   4. 创建 GitHub Release 并上传安装包
+#   5. 打版本标签 v<version> 并推送
 # ============================================================================
 name: Build Installer
 
@@ -19,14 +22,42 @@ on:
       - main
       - master
   workflow_dispatch:
+    inputs:
+      version:
+        description: '发版版本号（例如 0.1.0，对应的 tag 为 v0.1.0）'
+        required: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
 
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 需要完整历史以生成 Release Notes
+          fetch-depth: 0
+
+      - name: Determine version
+        id: set-version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $ver = "${{ github.event.inputs.version }}"
+          } else {
+            $verFile = "VERSION.default"
+            if (-not (Test-Path $verFile)) { throw "VERSION.default not found" }
+            $ver = (Get-Content $verFile -Raw).Trim()
+          }
+          if (-not $ver) { throw "Version is empty" }
+          Write-Host "version=$ver"
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Install Inno Setup 6
         run: choco install innosetup --no-progress -y
@@ -43,9 +74,27 @@ jobs:
         shell: pwsh
         run: .\scripts\build_installer.ps1
 
-      - name: Upload Installer Artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename installer with version
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.set-version.outputs.version }}"
+          $src = "dist\WinFire-Setup.exe"
+          $dst = "dist\WinFire-Setup-v$ver.exe"
+          if (-not (Test-Path $src)) { throw "Installer not found: $src" }
+          Move-Item -Path $src -Destination $dst -Force
+          Write-Host "Renamed to $dst"
+
+      - name: Create Release and Upload Artifact
+        uses: softprops/action-gh-release@v2
         with:
-          name: WinFire-Setup
-          path: dist\WinFire-Setup.exe
-          if-no-files-found: error
+          tag_name: v${{ steps.set-version.outputs.version }}
+          name: WinFire v${{ steps.set-version.outputs.version }}
+          body: |
+            微火五笔输入法 v${{ steps.set-version.outputs.version }}
+
+            自动构建于 GitHub Actions。
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: dist/WinFire-Setup-v${{ steps.set-version.outputs.version }}.exe
+          fail_on_unmatched_files: true
