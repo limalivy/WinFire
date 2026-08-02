@@ -34,13 +34,24 @@ jobs:
       - name: Install ATL Component (required by fire_tsf TIP)
         shell: pwsh
         run: |
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          if (-not $vsPath) { throw "Visual Studio installation path not found" }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          if (-not $vsPath) { throw "VS not found by vswhere" }
           Write-Host "VS path: $vsPath"
+
+          # Check if ATL is already installed
+          $hasAtl = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.ATL
+          if ($hasAtl) { Write-Host "ATL already installed"; exit 0 }
+
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          & $vsInstaller modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.ATL --quiet --norestart
-          if ($LASTEXITCODE -ne 0) { throw "ATL component installation failed (exit code $LASTEXITCODE)" }
-          Write-Host "ATL component installed successfully"
+          if (-not (Test-Path $vsInstaller)) { throw "vs_installer.exe not found at $vsInstaller" }
+          Write-Host "Installing ATL (this may take 2-3 minutes)..."
+          & $vsInstaller modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.ATL --quiet --norestart --includeRecommended
+          # 3010 = restart requested, still a success
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) {
+            throw "ATL install failed (exit code $LASTEXITCODE)"
+          }
+          Write-Host "ATL installed successfully"
 
       - name: Build Installer
         shell: pwsh
