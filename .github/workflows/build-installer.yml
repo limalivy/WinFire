@@ -31,6 +31,17 @@ jobs:
       - name: Install Inno Setup 6
         run: choco install innosetup --no-progress -y
 
+      - name: Install ATL Component (required by fire_tsf TIP)
+        shell: pwsh
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if (-not $vsPath) { throw "Visual Studio installation path not found" }
+          Write-Host "VS path: $vsPath"
+          $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          & $vsInstaller modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.ATL --quiet --norestart
+          if ($LASTEXITCODE -ne 0) { throw "ATL component installation failed (exit code $LASTEXITCODE)" }
+          Write-Host "ATL component installed successfully"
+
       - name: Build Installer
         shell: pwsh
         run: .\scripts\build_installer.ps1
