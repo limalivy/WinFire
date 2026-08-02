@@ -31,37 +31,13 @@ jobs:
       - name: Install Inno Setup 6
         run: choco install innosetup --no-progress -y
 
-      - name: Install ATL + MFC Components (required by fire_tsf TIP)
+      - name: Verify ATL headers (required by fire_tsf TIP)
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -property installationPath
-          Write-Host "VS path: $vsPath"
-
-          # Search for atlbase.h on disk
           $foundAtl = & $vswhere -latest -find "VC\Tools\MSVC\**\atlmfc\include\atlbase.h" | Select-Object -First 1
-          if ($foundAtl) { Write-Host "ATL already installed at: $foundAtl"; exit 0 }
-
-          $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          if (Test-Path $vsInstaller) {
-            Write-Host "vs_installer.exe found, installing ATL..."
-            & $vsInstaller modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.ATL --passive --norestart --includeRecommended
-            Write-Host "vs_installer exit code: $LASTEXITCODE"
-            if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) {
-              $foundAtl = & $vswhere -latest -find "VC\Tools\MSVC\**\atlmfc\include\atlbase.h" | Select-Object -First 1
-              if ($foundAtl) { Write-Host "ATL installed at: $foundAtl"; exit 0 }
-            }
-          } else {
-            Write-Host "vs_installer.exe NOT found at $vsInstaller"
-          }
-
-          # Fallback: install VS Build Tools with ATL via choco
-          Write-Host "Trying choco install of VS Build Tools + ATL ..."
-          choco install visualstudio2022buildtools --no-progress -y --package-parameters="--add Microsoft.VisualStudio.Component.VC.ATL --includeRecommended --passive --norestart"
-          $foundAtl = & $vswhere -latest -find "VC\Tools\MSVC\**\atlmfc\include\atlbase.h" | Select-Object -First 1
-          if (-not $foundAtl) { throw "ATL not found after all install attempts" }
-          Write-Host "ATL installed at: $foundAtl"
+          if (-not $foundAtl) { throw "atlbase.h not found - ATL component is missing" }
+          Write-Host "ATL found at: $foundAtl"
 
       - name: Build Installer
         shell: pwsh
