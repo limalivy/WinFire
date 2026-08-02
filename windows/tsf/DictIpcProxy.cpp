@@ -69,6 +69,7 @@ void DictIpcProxy::ValidateCache() {
     CacheValidateRequest req;
     req.client_version = kProtocolVersion;
     req.app_id = app_id_;
+    req.client_config_token = config_token_;  // dictd 比对，不一致则回传全量 config_json
 
     MsgType respType;
     std::vector<uint8_t> respPayload;
@@ -99,7 +100,7 @@ void DictIpcProxy::ValidateCache() {
         FIRE_LOG(L"[WinFire] ValidateCache: FAIL (decode error)\n");
         return;
     }
-    // token 变化 → 码表/配置/用户词变了，整个缓存失效。
+    // 候选缓存 token 变化 → 码表/配置/用户词变了，整个缓存失效。
     if (resp.token != cache_token_) {
         dll_cache_clear();
         FIRE_LOG(L"[WinFire] ValidateCache: token changed (old=%llu new=%llu), cache cleared\n",
@@ -112,9 +113,17 @@ void DictIpcProxy::ValidateCache() {
     if (!dll_cache_enabled_ && wasEnabled) {
         dll_cache_clear();
     }
-    FIRE_LOG(L"[WinFire] ValidateCache: OK token=%llu allow_dll_cache=%d enabled=%d\n",
+    // config 部分：token 变化时 dictd 回传全量 config_json，交给回调原地填 config_。
+    // 不变则 config_json 为空，跳过（省一次序列化）。
+    if (!resp.config_json.empty() && on_config_updated_) {
+        on_config_updated_(resp.config_json);
+        FIRE_LOG(L"[WinFire] ValidateCache: config updated (token %llu -> %llu)\n",
+                 (unsigned long long)config_token_, (unsigned long long)resp.config_token);
+    }
+    config_token_ = resp.config_token;
+    FIRE_LOG(L"[WinFire] ValidateCache: OK token=%llu allow_dll_cache=%d enabled=%d cfg_token=%llu\n",
              (unsigned long long)resp.token, resp.allow_dll_cache ? 1 : 0,
-             dll_cache_enabled_ ? 1 : 0);
+             dll_cache_enabled_ ? 1 : 0, (unsigned long long)resp.config_token);
 }
 
 fire::QueryResult DictIpcProxy::GetCandidates(const std::string& query, int page) {

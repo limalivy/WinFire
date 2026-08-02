@@ -10,6 +10,7 @@
 //
 #pragma once
 
+#include <functional>
 #include <list>
 #include <string>
 #include <unordered_map>
@@ -63,11 +64,25 @@ public:
     // 握手拿到的 config 摘要。
     char temp_en_trigger() const { return temp_en_trigger_; }
 
+    // ---- config 收敛到 dictd ----
+    // 设置 config 更新回调：ValidateCache 发现 dictd 的 config_token 与本地不一致时，
+    // dictd 会回传全量 config_json；本代理据此调用该回调（TextService 在其中
+    // ConfigStore::LoadFromString 原地填 config_，引擎经引用即见，不重建）。
+    using ConfigUpdatedCallback = std::function<void(const std::string& config_json)>;
+    void SetConfigUpdatedCallback(ConfigUpdatedCallback cb) { on_config_updated_ = std::move(cb); }
+    // 供 TextService 在 bootstrap 后设已知 token（避免首次 ValidateCache 必拉全量）。
+    void set_config_token(uint64_t t) { config_token_ = t; }
+
 private:
     NamedPipeClient client_;
     std::string app_id_;
     bool available_ = false;
     char temp_en_trigger_ = ';';
+
+    // config 版本指纹（dictd 算的 FNV-1a64(canonical json)）。0=未知，首次 ValidateCache
+    // 必拉全量。ValidateCache 拿到 dictd 回传的非空 config_json 后更新此值。
+    uint64_t config_token_ = 0;
+    ConfigUpdatedCallback on_config_updated_;
 
     // 退避：记录上次尝试恢复的时刻，距上次不足 kRecoverBackoffMs 则跳过。
     ULONGLONG lastRecoverTick_ = 0;

@@ -50,6 +50,18 @@ private:
     std::unique_ptr<fire::Statistics> stats_;
     std::mutex mu_;  // 串行化对 dict_/stats_ 的访问
 
+    // ---- config token（config 收敛到 dictd 的核心）----
+    // config_ 的版本指纹 = Fnv1a64(canonical json)。仅在 SetConfig / ReloadConfig /
+    // Init 时刷新（不 stat config.json，消除定时轮询）。DLL/config.exe 据此判断是否
+    // 需要拉全量 config_json。cached_config_json_ 缓存序列化结果供 token 一致时回传，
+    // 避免 token 校验路径重复序列化。
+    uint64_t config_token_ = 0;
+    std::string cached_config_json_;
+    void RefreshConfigToken();  // 重算 cached_config_json_ + config_token_（持锁调用）
+    // 计算当前候选缓存 token（db mtime/size + ConfigDigest + user_cache_generation）。
+    // 供 CacheValidate 与 SetConfigResponse.new_dict_token 复用同一算法（持锁调用）。
+    uint64_t ComputeDictToken();
+
     // SaveCache 节流：上次落盘时刻。DLL Deactivate 会频繁触发，限 1 分钟最多写一次。
     // 注意：Deactivate 不保证保存成功（daemon 可能已退出/被强杀），此处仅尽力而为。
     ULONGLONG last_cache_save_tick_ = 0;

@@ -155,34 +155,143 @@ TEST_CASE(ipc_cache_validate_roundtrip) {
     CacheValidateRequest req;
     req.client_version = 1;
     req.app_id = "notepad.exe";
+    req.client_config_token = 0x0123456789ABCDEFULL;
     auto rp = encode_cache_validate_request(req);
     Reader r1(rp);
     CacheValidateRequest gotReq = decode_cache_validate_request(r1);
     CHECK(r1.ok());
     CHECK_EQ(gotReq.client_version, 1);
     CHECK_STR_EQ(gotReq.app_id, "notepad.exe");
+    CHECK_EQ(gotReq.client_config_token, 0x0123456789ABCDEFULL);
 
-    // 响应往返：token 取全位模式以验证 u64 小端编解码正确
+    // 响应往返：全字段（含 config_token / config_json / 4 个 path）
     CacheValidateResponse resp;
     resp.token = 0x0123456789ABCDEFULL;
     resp.allow_dll_cache = true;
+    resp.config_token = 0xFEDCBA9876543210ULL;
+    resp.config_json = "{\"candidateCount\":9}";
+    resp.db_path = "C:\\data\\wb_py_dict.sqlite";
+    resp.stats_db_path = "C:\\data\\statistics.sqlite";
+    resp.user_dict_path = "C:\\data\\user-dict.txt";
+    resp.cache_store_path = "C:\\data\\query_cache.bin";
     auto sp = encode_cache_validate_response(resp);
     Reader r2(sp);
     CacheValidateResponse gotResp = decode_cache_validate_response(r2);
     CHECK(r2.ok());
     CHECK_EQ(gotResp.token, 0x0123456789ABCDEFULL);
     CHECK_EQ(gotResp.allow_dll_cache, true);
+    CHECK_EQ(gotResp.config_token, 0xFEDCBA9876543210ULL);
+    CHECK_STR_EQ(gotResp.config_json, "{\"candidateCount\":9}");
+    CHECK_STR_EQ(gotResp.db_path, "C:\\data\\wb_py_dict.sqlite");
+    CHECK_STR_EQ(gotResp.stats_db_path, "C:\\data\\statistics.sqlite");
+    CHECK_STR_EQ(gotResp.user_dict_path, "C:\\data\\user-dict.txt");
+    CHECK_STR_EQ(gotResp.cache_store_path, "C:\\data\\query_cache.bin");
 
-    // 边界：token=0、allow_dll_cache=false（dictd 未就绪时的响应）
+    // 边界：token=0、allow_dll_cache=false、config_json 空（token 一致 / dictd 未就绪）
     CacheValidateResponse resp2;
     resp2.token = 0;
     resp2.allow_dll_cache = false;
+    resp2.config_token = 0;
     auto sp2 = encode_cache_validate_response(resp2);
     Reader r3(sp2);
     CacheValidateResponse got2 = decode_cache_validate_response(r3);
     CHECK(r3.ok());
     CHECK_EQ(got2.token, 0ULL);
     CHECK_EQ(got2.allow_dll_cache, false);
+    CHECK_EQ(got2.config_token, 0ULL);
+    CHECK_STR_EQ(got2.config_json, "");
+}
+
+TEST_CASE(ipc_get_config_roundtrip) {
+    // token 一致 → config_json 空
+    GetConfigRequest req;
+    req.client_config_token = 42;
+    auto rp = encode_get_config_request(req);
+    Reader r1(rp);
+    GetConfigRequest gotReq = decode_get_config_request(r1);
+    CHECK(r1.ok());
+    CHECK_EQ(gotReq.client_config_token, 42u);
+
+    GetConfigResponse resp;
+    resp.config_token = 42;
+    // config_json 空（token 一致）
+    resp.db_path = "/db.sqlite";
+    resp.stats_db_path = "/stats.sqlite";
+    resp.user_dict_path = "/user-dict.txt";
+    resp.cache_store_path = "/cache.bin";
+    auto sp = encode_get_config_response(resp);
+    Reader r2(sp);
+    GetConfigResponse gotResp = decode_get_config_response(r2);
+    CHECK(r2.ok());
+    CHECK_EQ(gotResp.config_token, 42u);
+    CHECK_STR_EQ(gotResp.config_json, "");
+    CHECK_STR_EQ(gotResp.db_path, "/db.sqlite");
+    CHECK_STR_EQ(gotResp.stats_db_path, "/stats.sqlite");
+    CHECK_STR_EQ(gotResp.user_dict_path, "/user-dict.txt");
+    CHECK_STR_EQ(gotResp.cache_store_path, "/cache.bin");
+
+    // 全量 config_json（UTF-8 多字节）
+    GetConfigResponse resp2;
+    resp2.config_token = 99;
+    resp2.config_json = "{\"codeMode\":1,\"候选\":9}";
+    auto sp2 = encode_get_config_response(resp2);
+    Reader r3(sp2);
+    GetConfigResponse got2 = decode_get_config_response(r3);
+    CHECK(r3.ok());
+    CHECK_EQ(got2.config_token, 99u);
+    CHECK_STR_EQ(got2.config_json, "{\"codeMode\":1,\"候选\":9}");
+}
+
+TEST_CASE(ipc_set_config_roundtrip) {
+    SetConfigRequest req;
+    req.config_json = "{\"candidateCount\":7}";
+    req.reload_user_dict = true;
+    req.reinit_dict = false;
+    auto payload = encode_set_config_request(req);
+    Reader r(payload);
+    SetConfigRequest got = decode_set_config_request(r);
+    CHECK(r.ok());
+    CHECK_STR_EQ(got.config_json, "{\"candidateCount\":7}");
+    CHECK_EQ(got.reload_user_dict, true);
+    CHECK_EQ(got.reinit_dict, false);
+
+    SetConfigResponse resp;
+    resp.ok = true;
+    resp.new_config_token = 0xABCDEF0123456789ULL;
+    resp.new_dict_token = 0x1112223334445556ULL;
+    auto sp = encode_set_config_response(resp);
+    Reader r2(sp);
+    SetConfigResponse gotResp = decode_set_config_response(r2);
+    CHECK(r2.ok());
+    CHECK_EQ(gotResp.ok, true);
+    CHECK_EQ(gotResp.new_config_token, 0xABCDEF0123456789ULL);
+    CHECK_EQ(gotResp.new_dict_token, 0x1112223334445556ULL);
+
+    // 边界：ok=false（写盘失败）
+    SetConfigResponse resp2;
+    auto sp2 = encode_set_config_response(resp2);
+    Reader r3(sp2);
+    SetConfigResponse got2 = decode_set_config_response(r3);
+    CHECK(r3.ok());
+    CHECK_EQ(got2.ok, false);
+}
+
+TEST_CASE(ipc_reload_config_roundtrip) {
+    ReloadConfigRequest req;
+    req.source = "install.ps1";
+    auto payload = encode_reload_config_request(req);
+    Reader r(payload);
+    ReloadConfigRequest got = decode_reload_config_request(r);
+    CHECK(r.ok());
+    CHECK_STR_EQ(got.source, "install.ps1");
+
+    // 空来源
+    ReloadConfigRequest req2;
+    auto p2 = encode_reload_config_request(req2);
+    Reader r2(p2);
+    ReloadConfigRequest got2 = decode_reload_config_request(r2);
+    CHECK(r2.ok());
+    CHECK_STR_EQ(got2.source, "");
 }
 
 TEST_CASE(ipc_freq_request_roundtrip) {

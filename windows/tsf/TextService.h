@@ -111,18 +111,18 @@ private:
     // OnKeyUp 中发送 caps_lock 事件给引擎上屏大写字符（不切模式）。
     bool pendingCapsLockCommit_ = false;
 
-    // config.json 上次加载时的最后写入时间（FILETIME），供 MaybeReloadConfig 比较。
-    // 初始为 0：首次 OnKeyDown 必然触发一次 Load（与 InitEngine 里的首次 Load 幂等）。
-    FILETIME lastConfigMtime_ = {};
-    // 上次执行 config 检查（GetFileAttributesExW）的时刻（ms，GetTickCount64）。
-    // 节流：两次检查间隔至少 kConfigCheckIntervalMs，避免快速打字时每键一次 stat IO。
+    // config 收敛到 dictd：DLL 不再 stat config.json（消除定时轮询）。
+    // 仅 Activate 时 LoadConfigFromDisk 一次 bootstrap 兜底；之后 config 经 IPC 拿
+    //（CacheValidate 响应里 dictd 回传全量 config_json，token 不一致时才有值）。
+    // 上次执行 config IPC 校验的时刻（ms），用于节流：两次校验间隔至少
+    // kConfigCheckIntervalMs，避免快速打字时每键一次 IPC 往返（仍是零磁盘 IO）。
     ULONGLONG lastConfigCheckTick_ = 0;
 
     void InitEngine();
-    void LoadConfigFromDisk();  // 读取 config.json
-    // 配置热加载：比较 config.json 的 mtime 与上次加载时的值，变化了才重新 Load。
-    // 在 OnKeyDown 入口调用，使 fire_config.exe 改完设置后下一次按键即生效，
-    // 无需重启宿主进程。InputEngine/PunctuationConverter 持 config_ 引用，就地更新可见。
+    void LoadConfigFromDisk();  // 读取 config.json（仅 Activate bootstrap 用一次）
+    // 配置热加载（零轮询）：节流到期后直接 ValidateCache（IPC，不读盘）。
+    // dictd 比对 config_token，不一致时回传全量 config_json，回调里原地填 config_。
+    // 在 OnKeyDown 入口调用，使 config.exe 改完设置后下一次按键即生效。
     void MaybeReloadConfig();
     void RegisterLangBarButton();
     void UnregisterLangBarButton();

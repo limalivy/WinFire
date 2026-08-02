@@ -179,6 +179,7 @@ std::vector<uint8_t> encode_cache_validate_request(const CacheValidateRequest& r
     Writer w;
     w.put_u16(req.client_version);
     w.put_string(req.app_id);
+    w.put_u64(req.client_config_token);
     return w.take();
 }
 
@@ -186,6 +187,7 @@ CacheValidateRequest decode_cache_validate_request(Reader& r) {
     CacheValidateRequest req;
     req.client_version = r.get_u16();
     req.app_id = r.get_string();
+    req.client_config_token = r.get_u64();
     return req;
 }
 
@@ -193,6 +195,12 @@ std::vector<uint8_t> encode_cache_validate_response(const CacheValidateResponse&
     Writer w;
     w.put_u64(resp.token);
     w.put_u8(resp.allow_dll_cache ? 1 : 0);
+    w.put_u64(resp.config_token);
+    w.put_string(resp.config_json);
+    w.put_string(resp.db_path);
+    w.put_string(resp.stats_db_path);
+    w.put_string(resp.user_dict_path);
+    w.put_string(resp.cache_store_path);
     return w.take();
 }
 
@@ -200,7 +208,94 @@ CacheValidateResponse decode_cache_validate_response(Reader& r) {
     CacheValidateResponse resp;
     resp.token = r.get_u64();
     resp.allow_dll_cache = r.get_u8() != 0;
+    resp.config_token = r.get_u64();
+    resp.config_json = r.get_string();
+    resp.db_path = r.get_string();
+    resp.stats_db_path = r.get_string();
+    resp.user_dict_path = r.get_string();
+    resp.cache_store_path = r.get_string();
     return resp;
+}
+
+// ---- GetConfig ----
+std::vector<uint8_t> encode_get_config_request(const GetConfigRequest& req) {
+    Writer w;
+    w.put_u64(req.client_config_token);
+    return w.take();
+}
+
+GetConfigRequest decode_get_config_request(Reader& r) {
+    GetConfigRequest req;
+    req.client_config_token = r.get_u64();
+    return req;
+}
+
+std::vector<uint8_t> encode_get_config_response(const GetConfigResponse& resp) {
+    Writer w;
+    w.put_u64(resp.config_token);
+    w.put_string(resp.config_json);
+    w.put_string(resp.db_path);
+    w.put_string(resp.stats_db_path);
+    w.put_string(resp.user_dict_path);
+    w.put_string(resp.cache_store_path);
+    return w.take();
+}
+
+GetConfigResponse decode_get_config_response(Reader& r) {
+    GetConfigResponse resp;
+    resp.config_token = r.get_u64();
+    resp.config_json = r.get_string();
+    resp.db_path = r.get_string();
+    resp.stats_db_path = r.get_string();
+    resp.user_dict_path = r.get_string();
+    resp.cache_store_path = r.get_string();
+    return resp;
+}
+
+// ---- SetConfig ----
+std::vector<uint8_t> encode_set_config_request(const SetConfigRequest& req) {
+    Writer w;
+    w.put_string(req.config_json);
+    w.put_u8(req.reload_user_dict ? 1 : 0);
+    w.put_u8(req.reinit_dict ? 1 : 0);
+    return w.take();
+}
+
+SetConfigRequest decode_set_config_request(Reader& r) {
+    SetConfigRequest req;
+    req.config_json = r.get_string();
+    req.reload_user_dict = r.get_u8() != 0;
+    req.reinit_dict = r.get_u8() != 0;
+    return req;
+}
+
+std::vector<uint8_t> encode_set_config_response(const SetConfigResponse& resp) {
+    Writer w;
+    w.put_u8(resp.ok ? 1 : 0);
+    w.put_u64(resp.new_config_token);
+    w.put_u64(resp.new_dict_token);
+    return w.take();
+}
+
+SetConfigResponse decode_set_config_response(Reader& r) {
+    SetConfigResponse resp;
+    resp.ok = r.get_u8() != 0;
+    resp.new_config_token = r.get_u64();
+    resp.new_dict_token = r.get_u64();
+    return resp;
+}
+
+// ---- ReloadConfig ----
+std::vector<uint8_t> encode_reload_config_request(const ReloadConfigRequest& req) {
+    Writer w;
+    w.put_string(req.source);
+    return w.take();
+}
+
+ReloadConfigRequest decode_reload_config_request(Reader& r) {
+    ReloadConfigRequest req;
+    req.source = r.get_string();
+    return req;
 }
 
 // ---- Error ----

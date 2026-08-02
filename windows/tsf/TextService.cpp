@@ -127,7 +127,9 @@ CFireTextService::~CFireTextService() {
 
 void CFireTextService::LoadConfigFromDisk() {
     FIRE_LOG_ENTER();
-    // 读取 %APPDATA%\WinFire\config.json 的全量配置（不存在则用默认值）
+    // 读取 %APPDATA%\WinFire\config.json 的全量配置（不存在则用默认值）。
+    // 仅 Activate 时 bootstrap 调用一次：给引擎一个合理初始值，避免 dictd 冷启时
+    // 引擎以全 default 起步。之后 config 全部经 IPC 拿（dictd 是唯一真相源）。
     firecfg::ConfigStore::Load(config_);
 
     // 标点表：为空时用默认中文标点表
@@ -139,34 +141,16 @@ void CFireTextService::LoadConfigFromDisk() {
 }
 
 void CFireTextService::MaybeReloadConfig() {
-    // 节流：距上次检查不足 60 秒则跳过（GetTickCount64 无 IO，开销极低）。
-    // 用户快速打字时一秒可能数次 OnKeyDown，没必要每次都做 stat IO。
-    // 最坏情况：改完 config 后最多等 60 秒（下一次打字）生效，可接受。
+    // 零轮询 config 热加载：节流（60s）到期后直接发一次 ValidateCache IPC（不读盘）。
+    // dictd 比对 config_token，不一致时回传全量 config_json，回调里原地填 config_。
+    // 节流的意义从"省 stat IO"变为"省 IPC 往返"——仍是零磁盘 IO。
+    // 最坏情况：改完 config 后最多等 60 秒（下一次打字）生效。
     static const ULONGLONG kConfigCheckIntervalMs = 60 * 1000;
     ULONGLONG now = GetTickCount64();
     if (now - lastConfigCheckTick_ < kConfigCheckIntervalMs) {
         return;
     }
     lastConfigCheckTick_ = now;
-
-    // 用 GetFileAttributesExW 取 config.json 的最后写入时间（一次 stat）。
-    // 与 lastConfigMtime_ 比较：变化了才重新 Load，避免每次检查都解析 JSON。
-    std::wstring path = firecfg::GetConfigJsonPath();
-    WIN32_FILE_ATTRIBUTE_DATA fad = {};
-    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) {
-        return;  // 文件不存在或无法访问：静默跳过，保持现有配置
-    }
-    // FILETIME 比较（先比高 32 位，再比低 32 位）
-    if (fad.ftLastWriteTime.dwHighDateTime == lastConfigMtime_.dwHighDateTime &&
-        fad.ftLastWriteTime.dwLowDateTime == lastConfigMtime_.dwLowDateTime) {
-        return;  // 未变化
-    }
-    lastConfigMtime_ = fad.ftLastWriteTime;
-    FIRE_LOG(L"[WinFire] MaybeReloadConfig: config.json changed, reloading\n");
-    LoadConfigFromDisk();
-    // 配置变更可能影响候选结果（code_mode/candidate_count/enable_word_input 等），
-    // 重新向 dictd 校验本地缓存策略与 token：dictd 实时 stat db mtime/size 并结合
-    // config 摘要算新 token，与上次不符即清空 DLL 本地 LRU。
     if (dictService_) {
         dictService_->ValidateCache();
     }
@@ -175,27 +159,32 @@ void CFireTextService::MaybeReloadConfig() {
 void CFireTextService::InitEngine() {
     FIRE_LOG_ENTER();
 
+    // bootstrap：读一次磁盘给引擎合理初始值（沙箱场景可能读不到，降级用 default）。
+    // 之后首次 ValidateCache(client_config_token=0) 会从 dictd 拉全量 config 覆盖。
     LoadConfigFromDisk();
-    // 记录首次加载时的 mtime + 检查时刻，避免 MaybeReloadConfig 在第一次 OnKeyDown
-    // 时重复 stat/加载。
-    if (WIN32_FILE_ATTRIBUTE_DATA fad = {}; GetFileAttributesExW(
-            firecfg::GetConfigJsonPath().c_str(), GetFileExInfoStandard, &fad)) {
-        lastConfigMtime_ = fad.ftLastWriteTime;
-    }
     lastConfigCheckTick_ = GetTickCount64();
-    FIRE_LOG(L"[WinFire] InitEngine: config loaded\n");
+    FIRE_LOG(L"[WinFire] InitEngine: config loaded (bootstrap)\n");
 
     // 查字/统计服务：经 IPC 转发给 fire_dictd.exe（正常 IL 后台进程），
     // 使 SearchHost.exe/UWP 等 AppContainer 沙箱进程也能出候选。
     // 后台不可用时 IsAvailable()=false，引擎降级透传（不再回退本进程直接查库）。
     {
         auto proxy = std::make_unique<DictIpcProxy>(inputClient_.bundle_id());
+        // config 更新回调：dictd 在 CacheValidate 响应里回传全量 config_json 时调用。
+        // 原地填 config_（引擎/PunctuationConverter 持引用，即见，不重建引擎）。
+        proxy->SetConfigUpdatedCallback([this](const std::string& config_json) {
+            firecfg::ConfigStore::LoadFromString(config_, config_json);
+            if (config_.custom_punctuation_settings.empty()) {
+                config_.custom_punctuation_settings = fire::default_punctuation();
+            }
+        });
         ULONGLONG tHs = GetTickCount64();
         proxy->Handshake();
         FIRE_LOG(L"[WinFire] InitEngine: DictIpcProxy handshake ready=%d took=%lums\n",
                  proxy->IsAvailable() ? 1 : 0, (unsigned long)(GetTickCount64() - tHs));
-        // 握手成功后校验本地缓存策略（dictd 裁决是否允许 + 当前 token）。紧随握手复用
-        // 同一管道连接，仅 Activate 时一次往返。
+        // 握手成功后校验本地缓存策略 + 拉 config（client_config_token=0 强制全量）。
+        // 紧随握手复用同一管道连接，仅 Activate 时一次往返。dictd 不可用时跳过，
+        // 引擎保留 bootstrap 的磁盘 config（降级可用）。
         if (proxy->IsAvailable()) {
             proxy->ValidateCache();
         }

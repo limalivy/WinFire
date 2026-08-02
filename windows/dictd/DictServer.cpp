@@ -10,6 +10,8 @@
 #include "fire/query_cache_store.h"
 #include "fire/types.h"
 
+#include <fstream>
+
 namespace firewin {
 
 namespace {
@@ -126,6 +128,9 @@ bool DictServer::Init() {
         if (config_.custom_punctuation_settings.empty()) {
             config_.custom_punctuation_settings = fire::default_punctuation();
         }
+        // 计算初始 config token（canonical json 的 FNV-1a64）。后续仅在 SetConfig /
+        // ReloadConfig 时刷新——不再 stat config.json，消除定时轮询。
+        RefreshConfigToken();
     }
     DLOG(L"Init: config load+dir took %lu ms\n", (unsigned long)(GetTickCount64() - tA));
 
@@ -182,6 +187,52 @@ bool DictServer::Init() {
     DLOG(L"Init: DONE total=%lu ms dict_open=%d\n",
          (unsigned long)(GetTickCount64() - t0), ok ? 1 : 0);
     return ok;
+}
+
+void DictServer::RefreshConfigToken() {
+    // 调用方已持 mu_。重算 canonical json + token，供 CacheValidate / GetConfig 回传。
+    // config_token 与 json 内容强一致（同一 json 必同 token），不可能出现 token 没变但
+    // json 漂了的情况。仅在 SetConfig / ReloadConfig / Init 调用——零定时轮询。
+    cached_config_json_ = firecfg::ConfigStore::Serialize(config_);
+    config_token_ = fire::query_cache_store::Fnv1a64(
+        reinterpret_cast<const uint8_t*>(cached_config_json_.data()),
+        cached_config_json_.size());
+}
+
+uint64_t DictServer::ComputeDictToken() {
+    // 调用方已持 mu_。实时 stat db mtime/size（不依赖 DictManager 内部 db_fingerprint_*）
+    // 以捕获「外部刚改库、还没人查询」窗口。dictd 未就绪返回 0。
+    if (!dict_ || !dict_->is_open()) return 0;
+    std::error_code ec;
+    uint64_t mtime = 0, size = 0;
+    if (!config_.db_path.empty()) {
+        auto mt = std::filesystem::last_write_time(
+            std::filesystem::u8path(config_.db_path), ec);
+        if (!ec) mtime = static_cast<uint64_t>(mt.time_since_epoch().count());
+        auto sz = std::filesystem::file_size(
+            std::filesystem::u8path(config_.db_path), ec);
+        if (!ec) size = static_cast<uint64_t>(sz);
+    }
+    uint32_t cdigest = fire::query_cache_store::ConfigDigest(
+        static_cast<int>(config_.code_mode),
+        config_.candidate_count, config_.enable_word_input);
+    uint64_t user_gen = dict_->user_cache_generation();
+    // 小端字节拼接（与 wire 编码一致），FNV-1a64 压成单 u64。DLL 仅比较相等性。
+    auto put_u64_le = [](std::vector<uint8_t>& b, uint64_t v) {
+        for (int i = 0; i < 8; ++i) b.push_back(
+            static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+    };
+    auto put_u32_le = [](std::vector<uint8_t>& b, uint32_t v) {
+        for (int i = 0; i < 4; ++i) b.push_back(
+            static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+    };
+    std::vector<uint8_t> buf;
+    buf.reserve(8 + 8 + 4 + 8);
+    put_u64_le(buf, mtime);
+    put_u64_le(buf, size);
+    put_u32_le(buf, cdigest);
+    put_u64_le(buf, user_gen);
+    return fire::query_cache_store::Fnv1a64(buf);
 }
 
 fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
@@ -292,57 +343,110 @@ fire::ipc::MsgType DictServer::HandleRequest(fire::ipc::MsgType type,
         }
         case MsgType::CacheValidate: {
             CacheValidateRequest req = decode_cache_validate_request(r);
-            (void)req;
             CacheValidateResponse resp;
             // 策略位：开启动态调频时禁止 DLL 启用本地缓存（候选顺序会被调频记忆改变，
             // 缓存会返回旧顺序）。裁决权下放给 dictd，DLL 不自行读 config 判断，
             // 避免沙箱进程读不到 config 或多份 config 状态不一致（参见 RecordStat
             // 已用 dictd config 覆盖客户端值的先例）。
             resp.allow_dll_cache = !config_.enable_dynamic_frequency;
-            // token 综合指纹：实时 stat db mtime/size + ConfigDigest + user_cache_generation。
-            // 实时 stat（不依赖 DictManager 内部 db_fingerprint_*）以捕获「外部刚改库、
-            // 还没人查询」窗口，避免给出「未变」的假阴性让 DLL 误判缓存仍有效。
-            // DLL 仅比较 token 相等性，不解析内部，故算法可演进无需版本协商。
-            if (dict_ && dict_->is_open()) {
-                std::error_code ec;
-                uint64_t mtime = 0, size = 0;
-                if (!config_.db_path.empty()) {
-                    auto mt = std::filesystem::last_write_time(
-                        std::filesystem::u8path(config_.db_path), ec);
-                    if (!ec) mtime = static_cast<uint64_t>(
-                        mt.time_since_epoch().count());
-                    auto sz = std::filesystem::file_size(
-                        std::filesystem::u8path(config_.db_path), ec);
-                    if (!ec) size = static_cast<uint64_t>(sz);
-                }
-                uint32_t cdigest = fire::query_cache_store::ConfigDigest(
-                    static_cast<int>(config_.code_mode),
-                    config_.candidate_count, config_.enable_word_input);
-                uint64_t user_gen = dict_->user_cache_generation();
-                // 小端字节拼接（与 wire 编码一致），FNV-1a64 压成单 u64。
-                auto put_u64_le = [](std::vector<uint8_t>& b, uint64_t v) {
-                    for (int i = 0; i < 8; ++i) b.push_back(
-                        static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
-                };
-                auto put_u32_le = [](std::vector<uint8_t>& b, uint32_t v) {
-                    for (int i = 0; i < 4; ++i) b.push_back(
-                        static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
-                };
-                std::vector<uint8_t> buf;
-                buf.reserve(8 + 8 + 4 + 8);
-                put_u64_le(buf, mtime);
-                put_u64_le(buf, size);
-                put_u32_le(buf, cdigest);
-                put_u64_le(buf, user_gen);
-                resp.token = fire::query_cache_store::Fnv1a64(buf);
-            } else {
-                // dictd 未就绪：token=0（DLL 见 0 即禁用缓存，避免命中过期结果）。
-                resp.token = 0;
+            // 候选缓存 token 综合指纹（实时 stat db mtime/size + ConfigDigest +
+            // user_cache_generation）。dictd 未就绪时返回 0，DLL 见 0 即禁用缓存。
+            resp.token = ComputeDictToken();
+            if (resp.token == 0) {
                 resp.allow_dll_cache = false;
             }
+            // ---- config 部分（config 收敛到 dictd）----
+            // config_token 始终回传；config_json 仅在客户端 token 不一致时填全量，
+            // 省传输。token 一致即 config 未变，DLL 无需更新。
+            resp.config_token = config_token_;
+            if (req.client_config_token != config_token_) {
+                resp.config_json = cached_config_json_;
+            }
+            // 数据文件路径（供 config.exe 直接 I/O；DLL 沙箱一般不读但无害回传）。
+            resp.db_path = config_.db_path;
+            resp.stats_db_path = config_.stats_db_path;
+            resp.user_dict_path = WideToUtf8(firecfg::GetUserDictPath());
+            resp.cache_store_path =
+                WideToUtf8(firecfg::GetConfigDir() + L"\\query_cache.bin");
             responsePayload = encode_cache_validate_response(resp);
             needResponse = true;
             return MsgType::CacheValidate;
+        }
+        case MsgType::GetConfig: {
+            // config.exe 打开时拉全量 config + 数据文件路径（同步）。
+            // config_json 在 token 一致时留空省传输。
+            GetConfigRequest req = decode_get_config_request(r);
+            GetConfigResponse resp;
+            resp.config_token = config_token_;
+            if (req.client_config_token != config_token_) {
+                resp.config_json = cached_config_json_;
+            }
+            resp.db_path = config_.db_path;
+            resp.stats_db_path = config_.stats_db_path;
+            resp.user_dict_path = WideToUtf8(firecfg::GetUserDictPath());
+            resp.cache_store_path =
+                WideToUtf8(firecfg::GetConfigDir() + L"\\query_cache.bin");
+            responsePayload = encode_get_config_response(resp);
+            needResponse = true;
+            return MsgType::GetConfig;
+        }
+        case MsgType::SetConfig: {
+            // config.exe 委托 dictd 写 config.json + 热重载（同步）。
+            // dictd 是 config.json 唯一写者（原子 temp+rename），避免多进程写竞态。
+            SetConfigRequest req = decode_set_config_request(r);
+            SetConfigResponse resp;
+            if (!r.ok() || req.config_json.empty()) {
+                responsePayload = encode_set_config_response(resp);
+                needResponse = true;
+                return MsgType::SetConfig;
+            }
+            // 1) 原地解析填 config_（引擎/DictManager 持引用，即见）。
+            firecfg::ConfigStore::LoadFromString(config_, req.config_json);
+            if (config_.custom_punctuation_settings.empty()) {
+                config_.custom_punctuation_settings = fire::default_punctuation();
+            }
+            // 2) 原子写盘（规范化 canonical json）。
+            std::string canonical = firecfg::ConfigStore::Serialize(config_);
+            bool wrote = firecfg::ConfigStore::SaveAtomicFromString(canonical);
+            DLOG(L"SetConfig: atomic write %hs (json %zu bytes)\n",
+                 wrote ? L"OK" : L"FAIL", canonical.size());
+            // 3) 刷新 config token（canonical json 的 FNV-1a64）。
+            RefreshConfigToken();
+            // 4) 可选连带重载：user-dict 改了 / db 文件被替换。
+            if (req.reload_user_dict && dict_) {
+                // 从 user-dict.txt 重读内容导入 db（config.exe 已直接写文件）。
+                std::ifstream f(firecfg::GetUserDictPath(), std::ios::binary);
+                std::string content((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+                dict_->update_user_dict(content);  // 内部 clear_query_cache → generation++
+            }
+            if (req.reinit_dict && dict_) {
+                dict_->reinit();  // 重新打开 db 句柄；内部 clear_query_cache → generation++
+            }
+            resp.ok = wrote;
+            resp.new_config_token = config_token_;
+            resp.new_dict_token = ComputeDictToken();
+            responsePayload = encode_set_config_response(resp);
+            needResponse = true;
+            return MsgType::SetConfig;
+        }
+        case MsgType::ReloadConfig: {
+            // 通知 dictd 从磁盘重读 config.json（异步 fire-and-forget）。
+            // 供 fire_dictd.exe --reload-config 命令行 / install.ps1：外部改了 config.json
+            // 后触发，使 dictd 立即生效。规范化写回（保证后续 Serialize 一致）+ reinit。
+            ReloadConfigRequest req = decode_reload_config_request(r);
+            firecfg::ConfigStore::Load(config_);
+            if (config_.custom_punctuation_settings.empty()) {
+                config_.custom_punctuation_settings = fire::default_punctuation();
+            }
+            // 规范化写回（解析后再序列化，消除手写 json 的格式差异，保证 token 稳定）。
+            firecfg::ConfigStore::SaveAtomicFromString(
+                firecfg::ConfigStore::Serialize(config_));
+            RefreshConfigToken();
+            if (dict_) dict_->reinit();  // 配置可能影响候选，重建缓存
+            DLOG(L"ReloadConfig: reloaded from disk (source='%hs') cfg_token=%llu\n",
+                 req.source.c_str(), (unsigned long long)config_token_);
+            return MsgType::ReloadConfig;  // 异步，无响应
         }
         default: {
             ErrorMessage err;

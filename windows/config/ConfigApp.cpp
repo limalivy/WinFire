@@ -10,6 +10,7 @@
 #include "StatisticsPage.h"
 #include "DictPage.h"
 #include "ConfigStore.h"
+#include "ConfigIpcClient.h"
 
 #include <commctrl.h>
 #include <prsht.h>
@@ -64,8 +65,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&icc);
 
-    // 载入磁盘配置（不存在则用默认值）
-    firecfg::ConfigStore::Load(g_config);
+    // 载入配置：优先从 dictd 拉（config 收敛到 dictd 后，config.json 唯一真相源在 dictd）。
+    // dictd 不可用时降级直读 config.json（兜底，保证 config.exe 独立可用）。
+    {
+        fire::ipc::GetConfigResponse resp;
+        if (firecfg::IpcGetConfig(resp) && !resp.config_json.empty()) {
+            firecfg::ConfigStore::LoadFromString(g_config, resp.config_json);
+            if (g_config.custom_punctuation_settings.empty()) {
+                g_config.custom_punctuation_settings = fire::default_punctuation();
+            }
+        } else {
+            firecfg::ConfigStore::Load(g_config);
+        }
+    }
 
     // 各页对象：必须在 PropertySheet 返回前保持存活（模态调用期间）
     CInputSettingsPage pageInput;
@@ -97,8 +109,16 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     INT_PTR result = PropertySheetW(&psh);
     // PropertySheet 返回 IDOK(1) / IDCANCEL(2)。OK 时统一保存。
+    // 优先委托 dictd 写（原子写 + 热重载，使 DLL 下次按键即生效）；dictd 不可用时
+    // 降级直写 config.json（兜底）。词库相关变更（user-dict/db 重建）由 DictPage 单独
+    // 处理并经 SetConfig 带 reload flags；此处仅在用户编辑过 user-dict 时连带重载。
     if (result > 0 && result != IDCANCEL) {
-        firecfg::ConfigStore::Save(g_config);
+        fire::ipc::SetConfigResponse sr;
+        if (!firecfg::IpcSetConfig(firecfg::ConfigStore::Serialize(g_config),
+                                   /*reload_user_dict=*/pageDict.m_userDictEdited,
+                                   /*reinit_dict=*/false, sr)) {
+            firecfg::ConfigStore::Save(g_config);  // 降级兜底
+        }
     }
     return 0;
 }

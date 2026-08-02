@@ -26,7 +26,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\..\third_party\sqlite3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\core\include;$(ProjectDir)..\..\ipc\include;$(ProjectDir)..\..\third_party\sqlite3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -53,6 +53,10 @@
     <ClCompile Include="..\..\core\src\types.cpp" />
     <ClCompile Include="..\..\core\src\utf8.cpp" />
     <ClCompile Include="ConfigStore.cpp" />
+    <!-- config 收敛到 dictd：经 IPC 获取/更新 config（config.exe 不再直接读写 config.json） -->
+    <ClCompile Include="ConfigIpcClient.cpp" />
+    <ClCompile Include="..\..\ipc\src\wire.cpp" />
+    <ClCompile Include="..\..\ipc\src\protocol.cpp" />
     <!-- 第三方源码 -->
     <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
   </ItemGroup>
@@ -65,6 +69,7 @@
     <ClInclude Include="StatisticsPage.h" />
     <ClInclude Include="DictPage.h" />
     <ClInclude Include="ConfigStore.h" />
+    <ClInclude Include="ConfigIpcClient.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="ConfigApp.rc" />

@@ -4,6 +4,7 @@
 #include "ConfigApp.h"
 #include "DictPage.h"
 #include "ConfigStore.h"
+#include "ConfigIpcClient.h"
 
 #include <vector>
 #include <algorithm>
@@ -276,6 +277,12 @@ void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
 
         g_config.db_path = firecfg::WideToUtf8(db);
         SetStatus(L"词库构建成功");
+        // db 文件刚被 tablebuilder 替换，立即委托 dictd 重新打开 sqlite 句柄
+        //（reinit_dict=true → DictManager::reinit → clear_query_cache）。
+        // 用当前 g_config（含新 db_path）作 config_json，使 config.json 同步落盘。
+        fire::ipc::SetConfigResponse sr;
+        firecfg::IpcSetConfig(firecfg::ConfigStore::Serialize(g_config),
+                              /*reload_user_dict=*/false, /*reinit_dict=*/true, sr);
     } else if (id == IDC_BTN_EDIT_USERDICT) {
         std::wstring path = firecfg::GetUserDictPath();
         // 确保文件存在
@@ -284,6 +291,8 @@ void CDictPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         // 用记事本打开用户词库
         ShellExecuteW(hwnd, L"open", L"notepad.exe", path.c_str(), nullptr, SW_SHOWNORMAL);
+        // 标记已编辑：OK 保存时据此带 reload_user_dict 通知 dictd 重读该文件。
+        m_userDictEdited = true;
     }
 }
 

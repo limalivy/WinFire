@@ -25,6 +25,9 @@ public:
     // 上次保存的码表完整路径（从 g_config 读取，用于初始化下拉选中项）
     std::wstring m_wbTablePath;
     std::wstring m_pyTablePath;
+    // 用户词库是否被打开编辑过（点过编辑按钮即置 true）。
+    // OK 保存时据此决定是否带 reload_user_dict 通知 dictd 重读 user-dict.txt。
+    bool m_userDictEdited = false;
 
 protected:
     void OnInitDialog() override;

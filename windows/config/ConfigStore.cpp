@@ -220,6 +220,11 @@ void ParseCustomPunctuation(const std::string& json,
 bool ConfigStore::Load(fire::Config& c) {
     std::string json = ReadFileUtf8(GetConfigJsonPath());
     if (json.empty()) return false;
+    return LoadFromString(c, json);
+}
+
+bool ConfigStore::LoadFromString(fire::Config& c, const std::string& json) {
+    if (json.empty()) return false;
 
     c.z_key_query = GetBool(json, "zKeyQuery", c.z_key_query);
     c.show_code_in_window = GetBool(json, "showCodeInWindow", c.show_code_in_window);
@@ -284,7 +289,7 @@ bool ConfigStore::Load(fire::Config& c) {
     return true;
 }
 
-bool ConfigStore::Save(const fire::Config& c) {
+std::string ConfigStore::Serialize(const fire::Config& c) {
     std::ostringstream o;
     o << "{\n";
     o << "  \"zKeyQuery\": " << Bool(c.z_key_query) << ",\n";
@@ -328,7 +333,31 @@ bool ConfigStore::Save(const fire::Config& c) {
     o << "  \"wbTablePath\": \"" << EscapeJson(c.wb_table_path) << "\",\n";
     o << "  \"pyTablePath\": \"" << EscapeJson(c.py_table_path) << "\"\n";
     o << "}\n";
-    return WriteFileUtf8(GetConfigJsonPath(), o.str());
+    return o.str();
+}
+
+bool ConfigStore::Save(const fire::Config& c) {
+    return WriteFileUtf8(GetConfigJsonPath(), Serialize(c));
+}
+
+bool ConfigStore::SaveAtomicFromString(const std::string& json) {
+    // 原子写：同目录临时文件 -> MoveFileExW(REPLACE_EXISTING)。
+    // 同目录保证 rename 是原子操作（跨卷 rename 不原子）。
+    std::wstring final_path = GetConfigJsonPath();
+    std::wstring tmp = final_path + L".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write(json.data(), (std::streamsize)json.size());
+        if (!f) return false;
+    }
+    if (!MoveFileExW(tmp.c_str(), final_path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        // 替换失败（可能 config.json 被其它读者持有）→ 删临时文件，返回失败。
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    return true;
 }
 
 }  // namespace firecfg

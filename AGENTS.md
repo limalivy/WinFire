@@ -68,7 +68,8 @@ winFire/
 │   │   └── Resource.h          # IDI_FIRE_TSF_ICON 资源 ID
 │   ├── candidate_window/       # Win32 + GDI+ 候选窗
 │   ├── config/                 # 纯 Win32 配置界面（fire_config.exe，PropertySheet + GDI）
-│   ├── dictd/                  # 后台查字进程 fire_dictd.exe（命名管道 server + DictManager+Statistics）
+│   │   └── ConfigIpcClient.h/.cpp  # config.exe 侧 dictd IPC 客户端（GetConfig/SetConfig，不碰 config.json）
+│   ├── dictd/                  # 后台查字进程 fire_dictd.exe（命名管道 server + DictManager+Statistics + config.json 唯一写者）
 │   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具（IpcShared.h）
 ├── installer/                  # Inno Setup 脚本与预构建资源
 │   ├── winfire.iss             # 安装包脚本
@@ -193,6 +194,35 @@ spaceKey -> punctuation
   或多实例状态不一致。缓存失效时机覆盖：Activate 握手后、配置热加载后、重连后；通信失败时
   保守禁用并清空，不冒风险。
 
+### 4.9 配置收敛到 dictd（config.json 唯一真相源，零轮询）
+- **动机**：原 DLL 每 60s `stat` config.json 发现变更、dictd 启动时一次性读后**永不重载**，
+  导致多宿主 DLL 视图不一、dictd 永远停在启动快照。方案：config.json 的**读写唯一在 dictd
+  进程内**发生，DLL 与 config.exe 经 IPC 获取/更新 config，**消除所有定时 stat 轮询**。
+- **config_token**：`Fnv1a64(canonical config json)`，dictd 缓存 json+token。仅在 SetConfig /
+  ReloadConfig / Init 时刷新（不 stat config.json）。token 与 json 内容强一致（同 json 必同 token）。
+- **协议扩展**（向后兼容，只追加字段）：
+  - `CacheValidate`（`0x0B`）请求加 `client_config_token`；响应加 `config_token` + 条件
+    `config_json`（token 不一致时填全量，一致则空省传输）+ 4 个数据文件路径（db/stats/user_dict/cache_bin）。
+  - 新增 `GetConfig`（`0x0C`，同步）：config.exe 打开时拉全量 config + 路径。
+  - 新增 `SetConfig`（`0x0D`，同步 100ms）：config.exe 保存时委托 dictd 原子写 config.json
+    + 原地 reload + 刷新 token；`reload_user_dict`/`reinit_dict` 控制连带重载用户词库/重建 sqlite。
+  - 新增 `ReloadConfig`（`0x0E`，异步 fire-and-forget）：`fire_dictd.exe --reload-config` 命令行
+    / install.ps1 触发，dictd 从磁盘重读 config.json + 规范化写回 + reinit。
+- **dictd 热重载**：SetConfig handler 持锁做「原子写（temp+rename）→ LoadFromString → RefreshConfigToken
+  → 可选 reload_user_dict/reinit」；ReloadConfig handler 从磁盘 Load + 规范化写回 + RefreshToken + reinit。
+  **不增加任何 mtime stat**。
+- **DLL（零磁盘 IO 热加载）**：`MaybeReloadConfig` 删除全部 `GetFileAttributesExW` 逻辑，保留
+  60s 节流（语义从「省 stat」变「省 IPC」），到期直接 `ValidateCache(client_config_token)`。
+  响应非空 config_json → `ConfigStore::LoadFromString` 原地填 `config_`（引擎经引用即见，不重建）。
+  Activate 时 `LoadConfigFromDisk` 一次 bootstrap 兜底（沙箱读不到则降级 default，首次 IPC 补）。
+- **config.exe（经 IPC，不碰 config.json）**：打开走 `IpcGetConfig`（拉 dictd 全量）；保存走
+  `IpcSetConfig`（委托原子写+reload）；DictPage 重建词库后立即 `IpcSetConfig(reinit_dict=true)`，
+  编辑 user-dict 后 OK 时带 `reload_user_dict=true`。连不上 dictd 时 `LaunchBackend`（用
+  `GetModuleFileName(nullptr)` 定位自身目录，与 DLL 的 `GetModuleAnchor` 不同）+ 轮询连接；
+  IPC 全失败则降级 `ConfigStore::Load/Save` 直读写（兜底，保证 config.exe 独立可用）。
+- **已知限制**：非 config.exe / 非 SetConfig 改 config.json 不实时生效（需 `fire_dictd.exe
+  --reload-config` 或重启 dictd）——这是零轮询的必然代价。
+
 ## 5. 构建与验证
 
 ### 5.1 跨平台内核（CMake，可在 macOS / Linux 验证）
@@ -315,14 +345,16 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - 输入统计：DLL 端不直接持 `Statistics`，上屏事件经 `IDictService` 回调→`DictIpcProxy`→IPC→
   `fire_dictd.exe` 写库（`RecordStat` 异步 fire-and-forget）。
 - 按应用输入模式：`OnSetFocus(ITfDocumentMgr*)` 按 `bundle_id()`（宿主 exe 名）做 restore/save。
-- 全量配置：`LoadConfigFromDisk` 调用 `firecfg::ConfigStore::Load` 读取 `config.json`。
-- **配置热加载（带节流）**：`OnKeyDown` 入口调用 `MaybeReloadConfig`，但**每分钟最多做一次**
-  `GetFileAttributesExW`（mtime 检查），mtime 变化才真正 `LoadConfigFromDisk`。`InputEngine`/
-  `PunctuationConverter` 持 `config_` 引用，就地更新即可见，无需重建。权衡：改完配置最多等 60s
-  （下次打字）生效，换取快速打字时不每键 stat。
+- 全量配置：`LoadConfigFromDisk` 调用 `firecfg::ConfigStore::Load` 读取 `config.json`（仅 Activate
+  bootstrap 用一次，之后 config 全部经 IPC 从 dictd 拿，dictd 是唯一真相源，详见 §4.9）。
+- **配置热加载（零轮询）**：`OnKeyDown` 入口调用 `MaybeReloadConfig`，**每 60s 最多发一次**
+  `ValidateCache` IPC（不读盘）。dictd 比对 `config_token`，不一致时响应里带全量 `config_json`，
+  DLL 经 `ConfigStore::LoadFromString` 原地填 `config_`（`InputEngine`/`PunctuationConverter`
+  持引用，即见，无需重建）。权衡：改完配置最多等 60s（下次打字）生效，但**零磁盘 IO**（旧方案
+  每 60s 一次 `GetFileAttributesExW` stat 已删除）。
 - **DLL 本地缓存校验**：`InitEngine` 握手成功后调用 `DictIpcProxy::ValidateCache()` 获取 dictd
-  的 token 与缓存策略；`MaybeReloadConfig` 配置变更后也调用 `ValidateCache()`，使 dictd 重新
-  计算 token（含 ConfigDigest），DLL 据此清空本地 LRU 缓存，避免命中旧配置下的候选结果。
+  的 token + config_token + 全量 config（首次 client_config_token=0 强制全量）；`MaybeReloadConfig`
+  节流到期也调用 `ValidateCache()`。DLL 据候选 token 清空本地 LRU、据 config_json 更新 config_。
 - **SEH 崩溃保护**：`ActivateEx` 通过 `InitEngineSafe()`（`__try/__except` 包裹 `InitEngine`）
   防止引擎初始化崩溃导致宿主进程（QQ/Word/Chrome…）整体挂掉；崩溃时记录日志并返回 `E_FAIL`，
   宿主进程会优雅降级为不加载输入法。
@@ -370,7 +402,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   - 输入统计：统计开关、累计字数、不同词条数、字词频列表、清除/仅清字词频/导出 CSV。
   - **词库管理**：导入码表（选择 `wb_table.txt` / `wb_98_table.txt` / `py_table.txt`）、
     重建词库（调用 `tablebuilder` 生成 `wb_py_dict.sqlite`）、编辑用户词库（`user-dict.txt`）。
-- 读写 `config.json`；调用 `tablebuilder` 生成 `wb_py_dict.sqlite`；编辑 `user-dict.txt`。
+- **config 经 IPC（不直接读写 config.json）**：打开走 `IpcGetConfig`（拉 dictd 全量 config +
+  数据文件路径），保存走 `IpcSetConfig`（委托 dictd 原子写 + 热重载）。DictPage 重建词库后立即
+  `IpcSetConfig(reinit_dict=true)`，编辑 user-dict 后 OK 时带 `reload_user_dict=true`。dictd 不可用
+  时降级 `ConfigStore::Load/Save` 直读写（兜底）。调用 `tablebuilder` 生成 `wb_py_dict.sqlite`；
+  user-dict.txt 直接读写文件（路径从 GetConfig 响应取）。详见 §4.9。
 - 注：主题设置、CLI 暂未实现。
 
 ### 6.4 图标资源（resources/icons/）
