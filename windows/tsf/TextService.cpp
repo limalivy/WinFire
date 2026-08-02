@@ -141,16 +141,28 @@ void CFireTextService::LoadConfigFromDisk() {
 }
 
 void CFireTextService::MaybeReloadConfig() {
-    // 零轮询 config 热加载：节流（60s）到期后直接发一次 ValidateCache IPC（不读盘）。
+    // 零轮询 config 热加载（兜底）：节流（60s）到期后直接发一次 ValidateCache IPC（不读盘）。
     // dictd 比对 config_token，不一致时回传全量 config_json，回调里原地填 config_。
     // 节流的意义从"省 stat IO"变为"省 IPC 往返"——仍是零磁盘 IO。
-    // 最坏情况：改完 config 后最多等 60 秒（下一次打字）生效。
+    // 主路径是切应用触发的 ReloadConfigNow；此处仅兜底「用户长时间不切应用连续打字」
+    // 期间被外部脚本（fire_dictd.exe --reload-config）改 config 的极端场景。
     static const ULONGLONG kConfigCheckIntervalMs = 60 * 1000;
     ULONGLONG now = GetTickCount64();
     if (now - lastConfigCheckTick_ < kConfigCheckIntervalMs) {
         return;
     }
     lastConfigCheckTick_ = now;
+    if (dictService_) {
+        dictService_->ValidateCache();
+    }
+}
+
+void CFireTextService::ReloadConfigNow() {
+    // 切应用即时同步：绕过 MaybeReloadConfig 的 60s 节流，立即发一次 ValidateCache。
+    // 切应用是低频事件，且只在该次焦点切换的线程上阻塞一次同步 IPC（≤20ms），
+    // 不会冲击按键热路径。失败时静默（dictService_ 内部已处理，不影响输入）。
+    // 同时刷新节流时间戳，避免紧接着的 OnKeyDown 兜底又查一次（仍是零磁盘 IO）。
+    lastConfigCheckTick_ = GetTickCount64();
     if (dictService_) {
         dictService_->ValidateCache();
     }
@@ -398,6 +410,9 @@ STDMETHODIMP CFireTextService::OnSetFocus(ITfDocumentMgr* pdimFocus,
         FIRE_LOG(L"[WinFire] OnSetFocus(docmgr): app changed '%hs' -> '%hs', cleaning\n",
                  currentAppId_.c_str(), appId.c_str());
         engine_->clean();
+        // config 即时同步：config.exe 是独立窗口，改完设置切回目标应用必经此处。
+        // appChanged 判定天然规避了 StartComposition 反身触发的高频 OnSetFocus。
+        ReloadConfigNow();
     }
 
     // per-app 输入模式
@@ -504,8 +519,9 @@ STDMETHODIMP CFireTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM 
     FIRE_LOG(L"[WinFire] OnKeyDown: wParam=0x%lX pic=%p [tid=%lu]\n",
              (unsigned long)wParam, (void*)pic, GetCurrentThreadId());
 
-    // 配置热加载：fire_config.exe 改完设置后，下一次按键即生效（无需重启宿主）。
-    // 仅在文件 mtime 变化时才真正重载，否则只是一次 stat，开销可忽略。
+    // 配置热加载（兜底）：用户长时间不切应用连续打字期间，外部脚本改 config 的兜底。
+    // 主路径在 OnSetFocus(appChanged) —— config.exe 改完设置切回应用即实时同步。
+    // 零磁盘 IO，仅节流到期时发一次 ValidateCache IPC。
     MaybeReloadConfig();
 
     // 查字后台可用性恢复：若 dictService_ 不可用（如开机时后台尚未启动、

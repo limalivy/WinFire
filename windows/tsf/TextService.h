@@ -122,8 +122,11 @@ private:
     void LoadConfigFromDisk();  // 读取 config.json（仅 Activate bootstrap 用一次）
     // 配置热加载（零轮询）：节流到期后直接 ValidateCache（IPC，不读盘）。
     // dictd 比对 config_token，不一致时回传全量 config_json，回调里原地填 config_。
-    // 在 OnKeyDown 入口调用，使 config.exe 改完设置后下一次按键即生效。
+    // 在 OnKeyDown 入口调用，作为「用户长时间不切应用连续打字」期间的兜底。
     void MaybeReloadConfig();
+    // 切应用即时同步 config（绕过节流）：config.exe 是独立窗口，改完设置切回
+    // 目标应用时 OnSetFocus(appChanged) 必然触发，复用节流会让此场景被跳过而失效。
+    void ReloadConfigNow();
     void RegisterLangBarButton();
     void UnregisterLangBarButton();
     void RefreshLangBar();
