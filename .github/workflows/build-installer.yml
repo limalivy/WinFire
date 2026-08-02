@@ -1,0 +1,43 @@
+# ============================================================================
+# WinFire Installer Build — GitHub Actions
+#
+# 触发条件：仅当 VERSION.default 文件发生变化时，自动生成安装包。
+# 也可通过 workflow_dispatch 手动触发（用于测试）。
+#
+# 流程：
+#   1. 安装 Inno Setup 6（choco）
+#   2. 执行 scripts/build_installer.ps1（编译 VS 工程 + 构建词库 + 打包）
+#   3. 上传 dist\WinFire-Setup.exe 到 Actions Artifact
+# ============================================================================
+name: Build Installer
+
+on:
+  push:
+    paths:
+      - 'VERSION.default'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Installer
+        shell: pwsh
+        run: .\scripts\build_installer.ps1
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinFire-Setup
+          path: dist\WinFire-Setup.exe
+          if-no-files-found: error
