@@ -102,6 +102,34 @@ static void GuidToString(REFGUID guid, wchar_t* out /*[40]*/) {
     StringFromGUID2(guid, out, 40);
 }
 
+// ---- 用户级输入法安装（使输入法出现在「替代默认输入法」下拉）----
+// 通过 input.dll!InstallLayoutOrTip 把 TIP 写入当前用户输入法列表。
+// 仅系统级注册（HKLM 的 CTF\TIP）不够，下拉枚举的是用户级列表。
+#ifndef ILOT_UNINSTALL
+#define ILOT_UNINSTALL 0x00000001
+#endif
+typedef HRESULT(WINAPI* PTF_INSTALLLAYOUTORTIP)(LPCWSTR psz, DWORD dwFlags);
+
+// 构造 InstallLayoutOrTip 所需的字符串 "<langid十六进制小写>:<CLSID{带大括号}><Profile{带大括号}>"。
+// CLSID/Profile 经 GuidToString(StringFromGUID2) 输出已自带大括号，与 weasel 字面量格式一致。
+static void InstallLayoutOrTipForUser(REFCLSID clsid, REFGUID profile, DWORD dwFlags) {
+    wchar_t clsidStr[40] = {0};
+    wchar_t profileStr[40] = {0};
+    wchar_t langidStr[8] = {0};
+    GuidToString(clsid, clsidStr);
+    GuidToString(profile, profileStr);
+    wsprintfW(langidStr, L"%04x", FIRE_LANGID);
+    std::wstring psz = std::wstring(langidStr) + L":" + clsidStr + profileStr;
+
+    HMODULE hInput = LoadLibraryW(L"input.dll");
+    if (!hInput) return;  // 老系统/Server 无此 DLL，静默失败不阻断系统级注册
+    auto pfn = (PTF_INSTALLLAYOUTORTIP)GetProcAddress(hInput, "InstallLayoutOrTip");
+    if (pfn) {
+        (*pfn)(psz.c_str(), dwFlags);
+    }
+    FreeLibrary(hInput);
+}
+
 // 检查 CLSID 是否匹配 WinFire 基 GUID 模式。
 // CLSID 最后 3 字节由版本号派生，前 13 字节为哨兵值，用于识别所有版本的 WinFire。
 static bool IsWinFireBaseClsid(REFCLSID clsid) {
@@ -164,6 +192,8 @@ static void CleanupStaleRegistrations() {
 
         // 旧版本：移除语言 profile + 反注册 text service + 清 COM 注册表
         profiles->RemoveLanguageProfile(lp.clsid, FIRE_LANGID, lp.guidProfile);
+        // 对称清除旧版本在用户级输入法列表中的残留
+        InstallLayoutOrTipForUser(lp.clsid, lp.guidProfile, ILOT_UNINSTALL);
         if (!IsEqualGuid(lp.clsid, CLSID_FireTextService)) {
             profiles->Unregister(lp.clsid);
             UnregisterServerKeyFor(lp.clsid);
@@ -249,6 +279,12 @@ STDAPI DllRegisterServer() {
     for (const GUID& cat : categories) {
         catMgr->RegisterCategory(CLSID_FireTextService, cat, CLSID_FireTextService);
     }
+
+    // 用户级安装：写入当前用户输入法列表，使本输入法出现在
+    // 「设置 → 替代默认输入法」下拉（系统级注册不足以让下拉枚举到）。
+    profiles->EnableLanguageProfile(CLSID_FireTextService, FIRE_LANGID, GUID_FireProfile, TRUE);
+    profiles->EnableLanguageProfileByDefault(CLSID_FireTextService, FIRE_LANGID, GUID_FireProfile, TRUE);
+    InstallLayoutOrTipForUser(CLSID_FireTextService, GUID_FireProfile, 0);
     return S_OK;
 }
 
@@ -256,6 +292,9 @@ STDAPI DllUnregisterServer() {
     CComPtr<ITfInputProcessorProfiles> profiles;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_ITfInputProcessorProfiles, (void**)&profiles))) {
+        // 用户级卸载：从当前用户输入法列表移除（与注册对称）
+        profiles->RemoveLanguageProfile(CLSID_FireTextService, FIRE_LANGID, GUID_FireProfile);
+        InstallLayoutOrTipForUser(CLSID_FireTextService, GUID_FireProfile, ILOT_UNINSTALL);
         profiles->Unregister(CLSID_FireTextService);
     }
     CComPtr<ITfCategoryMgr> catMgr;

@@ -362,6 +362,16 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   - 程序文件：`%ProgramFiles%\WinFire\`（fire_tsf.dll、fire_config.exe、tables\）
   - 用户数据：`%APPDATA%\WinFire\`（config.json、user-dict.txt、wb_py_dict.sqlite、statistics.sqlite）
   - 调试日志（仅 Debug 版）：`%LOCALAPPDATA%\WinFire\logs\fire_tsf_<pid>.log`
+- **用户级输入法安装（出现在「替代默认输入法」下拉）**：`DllRegisterServer` 在系统级注册（HKLM
+  的 CTF\TIP + Category）之后，额外调用 `EnableLanguageProfile` / `EnableLanguageProfileByDefault`
+  与 `input.dll!InstallLayoutOrTip`（动态 `LoadLibrary`，签名 `HRESULT WINAPI(LPCWSTR, DWORD)`，
+  字符串格式 `"<langid十六进制>:<CLSID{大括号}><Profile{大括号}>"`，如 `0804:{...}{...}`），
+  把 TIP 写入**当前用户**输入法列表（HKCU）。Windows「设置 → 替代默认输入法」下拉枚举的正是
+  用户级列表，仅系统级注册不会出现在下拉里。`DllUnregisterServer` 与 `CleanupStaleRegistrations`
+  对称调用 `InstallLayoutOrTip(..., ILOT_UNINSTALL=1)` 清理。**管理员≠登录用户的限制**：regsvr32
+  以调用者身份运行，`InstallLayoutOrTip` 写入调用者的 HKCU；若以管理员账号提权安装而管理员 ≠
+  登录用户，需登录用户在「设置 → 语言 → 添加键盘」手动添加一次以触发当前用户安装（此为 TSF
+  已知限制，weasel 同样存在，不在代码层解决）。
 
 ### 6.2 候选窗（Win32 + GDI+ 自绘，windows/candidate_window/）
 - 无焦点浮窗：`WS_POPUP`，扩展样式 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，
