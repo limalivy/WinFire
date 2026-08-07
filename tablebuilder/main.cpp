@@ -148,6 +148,12 @@ static void build_wb_py_dict() {
         cout << "create index fail: " << sqlite3_errmsg(db) << endl;
         exit(1);
     }
+    // 合并完成，删除仅供合并用的中间表 wb_dict / py_dict 并回收空间。
+    // 运行时（dict_manager / dictd / engine）只查 wb_py_dict，从不读这两张表，
+    // 保留它们会让 db 无谓增大约 6.7MB（46%）。
+    sqlite3_exec(db, "drop table if exists wb_dict", nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "drop table if exists py_dict", nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "vacuum", nullptr, nullptr, nullptr);
     cout << "wb_py_dict built successfully" << endl;
 }
 

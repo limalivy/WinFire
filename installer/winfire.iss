@@ -95,9 +95,10 @@ Source: "{#BuildConfigDir}\fire_config.exe"; DestDir: "{app}"; Flags: ignorevers
 ; 后台查字进程 EXE（正常 IL，供 AppContainer 沙箱进程经 IPC 查库）。
 ; 后台可能常驻，安装/升级前由 [Code] 先温和结束旧进程；restartreplace 兜底占用场景。
 Source: "{#BuildDictdDir}\fire_dictd.exe";   DestDir: "{app}"; Flags: ignoreversion restartreplace
-; 预构建词库（随包分发，避免用户安装时长时间等待 tablebuilder 构建 1.3MB 码表）
-; 安装到用户数据目录，仅当目标不存在时复制（保留用户已有词库与动态调频）
-Source: "{#StagingDir}\wb_py_dict.sqlite";   DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
+; 词库（wb_py_dict.sqlite）不再随包预构建：改由 [Code] 段 BuildDictIfMissing 在
+; 安装时用 tablebuilder.exe + 码表现场生成（仅当用户数据目录下不存在时）。
+; 这样省去 ~7.78MB 预构建 db（包内 ~3.4MB），且现场构建仅约 1 秒。用户已有词库
+; （含动态调频）保留不覆盖，语义与原 onlyifdoesntexist 一致。
 ; 默认配置（仅首次安装写入，已存在则保留用户自定义）
 Source: "{#StagingDir}\config.json";         DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
 ; 码表（供 fire_config.exe 词库管理页导入/重建词库使用）
@@ -190,6 +191,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 ; 简体中文本地化
 StatusRegisteringIME=正在注册输入法...
 StatusGrantingAcl=正在配置沙箱访问权限...
+StatusBuildingDict=正在构建词库，请稍候...
 LaunchConfigTool=启动配置工具(&L)
 UninstallDataPrompt=是否删除用户数据（配置、词库、输入统计）？%n选择「否」将保留 %1 以便将来重装。
 
@@ -288,6 +290,39 @@ begin
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+// 调用 tablebuilder.exe 执行一次子命令；成功（进程启动且退出码 0）返回 True。
+// Exec 返回 False 表示连进程都启动不了（如缺 CRT），ResultCode 非零表示子命令报错。
+function RunTableBuilder(const Params: String; var ResultCode: Integer): Boolean;
+begin
+  Result := Exec(ExpandConstant('{app}\tablebuilder.exe'), Params, '',
+                 SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+// 安装时现场构建词库（仅当用户数据目录下不存在 wb_py_dict.sqlite 时）。
+// 不再随包预构建 ~7.78MB 的 sqlite（包内省 ~3.4MB），改由 tablebuilder + 码表
+// 现场生成（约 1 秒）。用户已有词库（含动态调频）保留，语义同原 onlyifdoesntexist。
+// 失败时不中断安装：dictd 缺库仅返回空结果不崩溃，用户可在配置工具词库管理页重建
+// （tablebuilder.exe 与码表都在 {app}，随时可用）。
+procedure BuildDictIfMissing();
+var
+  dbPath, appDir: String;
+  ResultCode: Integer;
+begin
+  dbPath := ExpandConstant('{userappdata}\WinFire\wb_py_dict.sqlite');
+  if FileExists(dbPath) then
+    exit;  // 保留用户已有词库与动态调频
+  appDir := ExpandConstant('{app}');
+  WizardForm.StatusLabel.Caption := CustomMessage('StatusBuildingDict');
+
+  // 三步与 build_installer.ps1 / DictPage.cpp 完全一致：建 wb_dict → 建 py_dict → 合并
+  // （tablebuilder 内部 combine 完会 DROP 中间表 + VACUUM，产物即最终词库）。
+  if (not RunTableBuilder('"' + appDir + '\tables\wb_table.txt" wb_dict "' + dbPath + '"', ResultCode))
+     or (ResultCode <> 0) then exit;
+  if (not RunTableBuilder('"' + appDir + '\tables\py_table.txt" py_dict "' + dbPath + '"', ResultCode))
+     or (ResultCode <> 0) then exit;
+  RunTableBuilder('--combine-dict "' + dbPath + '"', ResultCode);
+end;
+
 function InitializeSetup(): Boolean;
 begin
   // 安装前先清理上次卸载残留的 PendingFileRenameOperations 条目，
@@ -303,6 +338,9 @@ begin
   if CurStep = ssPostInstall then
   begin
     CleanupOldTsfDlls();
+    // 现场构建词库（ssPostInstall 时 [Files] 已全部就位，且早于 [Run] 启动 dictd，
+    // 保证 dictd 首次启动时 sqlite 已存在）。仅当用户无已有词库时触发。
+    BuildDictIfMissing();
     // DeleteOrDeferDll 可能又写入了新的 PFR 条目（旧 DLL 仍被占用），
     // 再次清理确保不留残余。
     CleanWinFirePendingOps();

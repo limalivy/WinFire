@@ -109,35 +109,39 @@ Copy-Item $tablebuilder "$StagingDir\tablebuilder.exe" -Force
 Write-Host "  [OK] Copied to staging" -ForegroundColor Green
 
 # ============================================================================
-# 3. 预构建 wb_py_dict.sqlite 到 staging
+# 3. 校验词库工具链（tablebuilder + 码表 → 能产出正确的 wb_py_dict.sqlite）
+#    不再预构建 staging db 打包：安装时由 winfire.iss [Code] BuildDictIfMissing
+#    现场生成。此处仅构建到临时路径并校验产物，确认 tablebuilder 与码表健康，
+#    保证 (a) 安装时现场构建、(b) 配置工具词库管理页「生成词库」两条路径都可靠。
 # ============================================================================
-Write-Step "[3/5] Pre-building wb_py_dict.sqlite"
-if (-not (Test-Path $StagingDir)) {
-    New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
-}
-$stagingDb = Join-Path $StagingDir "wb_py_dict.sqlite"
-if (Test-Path $stagingDb) { Remove-Item $stagingDb -Force }
-
-$wbTable   = Join-Path $RepoRoot "resources\wb_table.txt"
-$wb98Table = Join-Path $RepoRoot "resources\wb_98_table.txt"
-$pyTable   = Join-Path $RepoRoot "resources\py_table.txt"
-
+Write-Step "[3/5] Verifying dict toolchain (tablebuilder + tables)"
+$wbTable = Join-Path $RepoRoot "resources\wb_table.txt"
+$pyTable = Join-Path $RepoRoot "resources\py_table.txt"
 if (-not (Test-Path $wbTable)) { throw "wb_table.txt not found: $wbTable" }
 if (-not (Test-Path $pyTable)) { throw "py_table.txt not found: $pyTable" }
 
-Write-Host "  Creating wb_dict ..." -ForegroundColor Yellow
-& $tablebuilder --create-dict $wbTable wb_dict $stagingDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { throw "wb_dict creation failed" }
+$verifyDb = Join-Path $env:TEMP "winfire_dict_verify.db"
+if (Test-Path $verifyDb) { Remove-Item $verifyDb -Force }
 
-Write-Host "  Creating py_dict ..." -ForegroundColor Yellow
-& $tablebuilder --create-dict $pyTable py_dict $stagingDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { throw "py_dict creation failed" }
+Write-Host "  Building verify db (wb + py + combine) ..." -ForegroundColor Yellow
+& $tablebuilder --create-dict $wbTable wb_dict $verifyDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+if ($LASTEXITCODE -ne 0) { Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue; throw "wb_dict creation failed (toolchain broken)" }
 
-Write-Host "  Combining wb_py_dict ..." -ForegroundColor Yellow
-& $tablebuilder --combine-dict $stagingDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { throw "combine-dict failed" }
+& $tablebuilder --create-dict $pyTable py_dict $verifyDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+if ($LASTEXITCODE -ne 0) { Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue; throw "py_dict creation failed (toolchain broken)" }
 
-Write-Host "  [OK] $stagingDb ($(Get-Item $stagingDb | Select-Object -ExpandProperty Length) bytes)" -ForegroundColor Green
+& $tablebuilder --combine-dict $verifyDb 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+if ($LASTEXITCODE -ne 0) { Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue; throw "combine-dict failed (toolchain broken)" }
+
+# 产物校验：瘦身后正确词库约 7.78MB（19 万行 + 索引 + VACUUM），下限 5MB 足以捕获
+# 工具链崩溃 / 缺码表 / 缺 CRT（tablebuilder 已静态 /MT）/ sqlite 损坏等主要故障。
+$verifySize = (Get-Item $verifyDb).Length
+if ($verifySize -lt 5MB) {
+    Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue
+    throw "verify db too small: $verifySize bytes (expected >5MB; toolchain broken)"
+}
+Write-Host "  [OK] Toolchain verified (verify db: $verifySize bytes)" -ForegroundColor Green
+Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue
 
 # ============================================================================
 # 4. 生成默认 config.json 到 staging

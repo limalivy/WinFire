@@ -81,6 +81,18 @@ if(BUILD_TABLEBUILDER)
     target_link_libraries(tablebuilder PRIVATE ${FIRE_SQLITE3_LIB})
 endif()
 
+# 安装包不打包预构建词库，改为安装时用 tablebuilder + 码表现场生成（见
+# installer/winfre.iss 的 BuildDictIfMissing）。tablebuilder 因此必须能在任意
+# 全新用户机器（可能未装 VC Redist）上独立运行，故与其它三个 Win32 二进制一致
+# 用静态 CRT /MT。仅在打包构建（BUILD_TABLEBUILDER=ON 且 BUILD_TESTS=OFF，即
+# build_installer.ps1 的配置）下生效：fire_sqlite3 静态库与 tablebuilder 同步切 /MT，
+# 保证链接器不报 LNK2038（CRT 不匹配）；开发机默认 BUILD_TESTS=ON 时此守卫不触发，
+# fire_sqlite3 / fire_tests 仍按 CMake 默认 /MD，macOS 路径也自动无害（MSVC 守卫）。
+if(BUILD_TABLEBUILDER AND NOT BUILD_TESTS AND MSVC)
+    set_target_properties(fire_sqlite3 tablebuilder PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded")
+endif()
+
 # ---- 内核单元测试 ----
 if(BUILD_TESTS AND BUILD_CORE)
     enable_testing()
