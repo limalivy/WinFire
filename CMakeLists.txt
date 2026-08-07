@@ -32,7 +32,11 @@ option(BUILD_TABLEBUILDER "Build wubi/pinyin table builder tool" ON)
 # Windows 上若未安装 SQLite3，回退到项目自带的 third_party/sqlite3/sqlite3.c 源码编译。
 find_package(SQLite3 QUIET)
 if(NOT SQLite3_FOUND)
-    set(FIRE_SQLITE3_SRC ${CMAKE_SOURCE_DIR}/third_party/sqlite3/sqlite3.c)
+    # 不直接编译官方 sqlite3.c，改编译项目 wrapper：它先 #include 集中式裁剪选项头
+    # （fire_sqlite_compile_options.h，定义 SQLITE_OMIT_* 等宏），再 #include sqlite3.c。
+    # 三处编译入口（此处、fire_dictd.vcxproj、fire_config.vcxproj）统一经 wrapper 引用，
+    # 保持 sqlite3.c/h 原文件不动、便于升级 amalgamation。详见该头文件注释。
+    set(FIRE_SQLITE3_SRC ${CMAKE_SOURCE_DIR}/third_party/sqlite3/fire_sqlite3_amalg.c)
     set(FIRE_SQLITE3_INC ${CMAKE_SOURCE_DIR}/third_party/sqlite3)
     add_library(fire_sqlite3 STATIC ${FIRE_SQLITE3_SRC})
     target_include_directories(fire_sqlite3 PUBLIC ${FIRE_SQLITE3_INC})

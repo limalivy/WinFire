@@ -89,7 +89,8 @@
     <ClCompile Include="..\..\ipc\src\wire.cpp" />
     <ClCompile Include="..\..\ipc\src\protocol.cpp" />
     <!-- 第三方源码 -->
-    <ClCompile Include="..\..\third_party\sqlite3\sqlite3.c" />
+    <!-- 编译项目 wrapper（先注入 fire_sqlite_compile_options.h 裁剪宏，再编译 sqlite3.c），而非官方 sqlite3.c -->
+    <ClCompile Include="..\..\third_party\sqlite3\fire_sqlite3_amalg.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="UiBase.h" />
