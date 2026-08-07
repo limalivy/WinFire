@@ -4,7 +4,6 @@
 //
 #pragma once
 
-#include <chrono>
 #include <functional>
 #include <map>
 #include <optional>
@@ -100,14 +99,6 @@ private:
 
     // 中英文切换：Shift 单击检测
     double last_modifier_down_time_ = 0;
-
-    // ---- 防抖 ----
-    // 同一按键（text+special）在 20ms 内再次触发 → 丢弃
-    std::string last_key_text_;
-    fire::SpecialKey last_key_special_ = fire::SpecialKey::None;
-    std::chrono::steady_clock::time_point last_key_time_;
-    static constexpr auto kKeyDebounceInterval = std::chrono::milliseconds(20);
-    bool debounce_key(const KeyEvent& e);
 
     // ---- 内部工具 ----
     void set_original_string(const std::string& value);

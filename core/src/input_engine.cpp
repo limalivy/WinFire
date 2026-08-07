@@ -773,27 +773,8 @@ std::optional<bool> InputEngine::punctuation_key_handler(const KeyEvent& e) {
     return std::nullopt;
 }
 
-// ---- 防抖：同一按键在 20ms 内再次触发 → 丢弃（防电气抖动/硬件误触） ----
-// 比较 text+special 确定按键身份；不影响正常打字（阈值低于 Windows 最快自动重复间隔 ~33ms）。
-bool InputEngine::debounce_key(const KeyEvent& e) {
-    auto now = std::chrono::steady_clock::now();
-    if (e.text == last_key_text_ && e.special == last_key_special_ &&
-        (now - last_key_time_) < kKeyDebounceInterval) {
-        return true;  // 丢弃
-    }
-    last_key_text_ = e.text;
-    last_key_special_ = e.special;
-    last_key_time_ = now;
-    return false;
-}
-
 // ---- 主入口，对应 handle(_:client:) ----
 bool InputEngine::handle_key(const KeyEvent& e) {
-    // 防抖：同一按键短时间内重复触发 → 消费掉，不进入引擎状态机
-    if (debounce_key(e)) {
-        return true;
-    }
-
     using H = std::optional<bool> (InputEngine::*)(const KeyEvent&);
     static const H handlers[] = {
         &InputEngine::hotkey_handler,      &InputEngine::caps_lock_handler,
