@@ -83,7 +83,8 @@ UninstallDisplayIcon={app}\fire_config.exe
 UninstallDisplayName={#MyAppName}
 
 ; ----------------------------------------------------------------------------
-; 程序文件：fire_tsf.dll / fire_config.exe / tablebuilder.exe / 码表 / 预构建词库 / 默认配置
+; 程序文件：fire_tsf.dll / fire_config.exe / fire_dictd.exe / tablebuilder.exe / 码表 / 默认配置
+; 词库不预构建：由下方 BuildDictIfMissing 在安装时用 tablebuilder + 码表现场生成。
 ; 程序目录只读，所有用户可写数据放 %APPDATA%\WinFire
 ; ----------------------------------------------------------------------------
 [Files]
@@ -325,9 +326,11 @@ begin
 
   // 三步与 build_installer.ps1 / DictPage.cpp 完全一致：建 wb_dict → 建 py_dict → 合并
   // （tablebuilder 内部 combine 完会 DROP 中间表 + VACUUM，产物即最终词库）。
-  if (not RunTableBuilder('"' + appDir + '\tables\wb_table.txt" wb_dict "' + dbPath + '"', ResultCode))
+  // 注意：每步首参必须带 '--create-dict' 子命令；tablebuilder 按 argv[1] 路由子命令，
+  // 漏掉会落入 usage 分支静默 return 0（既不报错也不建表），导致 combine 找不到中间表。
+  if (not RunTableBuilder('--create-dict "' + appDir + '\tables\wb_table.txt" wb_dict "' + dbPath + '"', ResultCode))
      or (ResultCode <> 0) then exit;
-  if (not RunTableBuilder('"' + appDir + '\tables\py_table.txt" py_dict "' + dbPath + '"', ResultCode))
+  if (not RunTableBuilder('--create-dict "' + appDir + '\tables\py_table.txt" py_dict "' + dbPath + '"', ResultCode))
      or (ResultCode <> 0) then exit;
   RunTableBuilder('--combine-dict "' + dbPath + '"', ResultCode);
 end;

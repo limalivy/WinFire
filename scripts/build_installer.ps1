@@ -3,8 +3,9 @@
 #
 # 流程：
 #   1. 用 MSBuild 编译 fire_tsf.vcxproj / fire_config.vcxproj / fire_dictd.vcxproj (Release|x64)
-#   2. 用 CMake 构建 tablebuilder.exe（生成预构建词库用）
-#   3. 用 tablebuilder 预构建 wb_py_dict.sqlite 到 installer\staging\
+#   2. 用 CMake 构建 tablebuilder.exe 并拷贝到 installer\staging\
+#   3. 校验词库工具链（tablebuilder + 码表 → 临时目录现场构建并验证 wb_py_dict.sqlite 产物）
+#      （不再预构建词库进包：安装时由 winfire.iss [Code] BuildDictIfMissing 现场生成）
 #   4. 生成默认 config.json 到 installer\staging\
 #   5. 调用 ISCC.exe 编译 installer\winfire.iss -> dist\WinFire-Setup.exe
 #

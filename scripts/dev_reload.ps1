@@ -206,7 +206,6 @@ $ConfigDir   = "$env:APPDATA\WinFire"
 $ConfigFile   = "$ConfigDir\config.json"
 $DictDb       = "$ConfigDir\wb_py_dict.sqlite"
 $StatsDb      = "$ConfigDir\statistics.sqlite"
-$StagingDict  = "$RepoRoot\installer\staging\wb_py_dict.sqlite"
 $StagingConf  = "$RepoRoot\installer\staging\config.json"
 $null = New-Item -ItemType Directory -Path $ConfigDir -Force
 
@@ -237,15 +236,30 @@ if (-not (Test-Path $ConfigFile)) {
     Write-Host "  [SKIP] config.json exists" -ForegroundColor DarkGray
 }
 
-# wb_py_dict.sqlite
+# wb_py_dict.sqlite：用刚部署的 tablebuilder.exe + 项目码表现场生成（与 winfire.iss
+# BuildDictIfMissing / install.ps1 Create-DictDb 三步一致：wb → py → combine）。
+# staging 不再预构建词库，开发机上现场构建约 1 秒。
 if (-not (Test-Path $DictDb)) {
-    if (Test-Path $StagingDict) {
-        Copy-Item $StagingDict $DictDb -Force
-        $sizeMb = [math]::Round((Get-Item $DictDb).Length / 1MB, 1)
-        Write-Host "  [OK] wb_py_dict.sqlite (${sizeMb}MB, from staging)" -ForegroundColor Green
-    } else {
-        Write-Host "  [WARN] No pre-built dict found; run build_installer.ps1 first or" -ForegroundColor Yellow
+    $wbTable = "$RepoRoot\resources\wb_table.txt"
+    $pyTable = "$RepoRoot\resources\py_table.txt"
+    if (-not (Test-Path $TablebuilderDst) -or -not (Test-Path $wbTable)) {
+        Write-Host "  [WARN] tablebuilder.exe or wb_table.txt not found; cannot build dict" -ForegroundColor Yellow
         Write-Host "         copy a wb_py_dict.sqlite to $ConfigDir" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Building wb_py_dict.sqlite (tablebuilder + tables)..." -ForegroundColor DarkGray
+        & $TablebuilderDst --create-dict $wbTable wb_dict $DictDb 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] wb_dict creation failed; copy a wb_py_dict.sqlite to $ConfigDir" -ForegroundColor Yellow
+        } else {
+            & $TablebuilderDst --create-dict $pyTable py_dict $DictDb 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  [WARN] py_dict creation failed; copy a wb_py_dict.sqlite to $ConfigDir" -ForegroundColor Yellow
+            } else {
+                & $TablebuilderDst --combine-dict $DictDb 2>&1 | Out-Null
+                $sizeMb = [math]::Round((Get-Item $DictDb).Length / 1MB, 1)
+                Write-Host "  [OK] wb_py_dict.sqlite (${sizeMb}MB, built from tables)" -ForegroundColor Green
+            }
+        }
     }
 } else {
     Write-Host "  [SKIP] wb_py_dict.sqlite exists" -ForegroundColor DarkGray

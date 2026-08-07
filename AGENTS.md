@@ -61,6 +61,7 @@ winFire/
 │   ├── test_engine.cpp
 │   ├── test_input_mode_cache.cpp
 │   ├── test_statistics.cpp
+│   ├── test_query_cache.cpp    # 查询缓存持久化快照 Load/Save/Remove 测试
 │   └── test_ipc_protocol.cpp   # IPC 协议编解码往返测试
 ├── windows/                    # Windows 平台层
 │   ├── tsf/                    # ATL TSF TIP DLL（fire_tsf.dll，含 DictIpcProxy + NamedPipeClient）
@@ -71,9 +72,9 @@ winFire/
 │   │   └── ConfigIpcClient.h/.cpp  # config.exe 侧 dictd IPC 客户端（GetConfig/SetConfig，不碰 config.json）
 │   ├── dictd/                  # 后台查字进程 fire_dictd.exe（命名管道 server + DictManager+Statistics + config.json 唯一写者）
 │   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具（IpcShared.h）
-├── installer/                  # Inno Setup 脚本与预构建资源
-│   ├── winfire.iss             # 安装包脚本
-│   └── staging/                # 预构建词库 + 默认 config.json（随包分发）
+├── installer/                  # Inno Setup 脚本与 staging 资源
+│   ├── winfire.iss             # 安装包脚本（含安装时现场生成词库的 [Code] BuildDictIfMissing）
+│   └── staging/                # tablebuilder.exe + 默认 config.json（随包分发；词库不预构建，见 §5.3）
 ├── scripts/                    # PowerShell 构建/安装/卸载/维护脚本
 │   ├── build_installer.ps1     # 一键编译 + 生成 WinFire-Setup.exe
 │   ├── install.ps1             # 直接部署（不走 installer，需管理员）
@@ -84,7 +85,7 @@ winFire/
 ├── resources/                  # 资源
 │   ├── *.txt                   # 内置码表（86 版 / 98 版五笔 + 拼音）
 │   └── icons/                  # 图标资源（winfire.ico 含 16/24/32/48/256 帧 + svg 母版 + render 脚本）
-└── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
+└── third_party/sqlite3/        # sqlite3 源码（经 wrapper fire_sqlite3_amalg.c + 集中裁剪宏头编译进 fire_dictd.exe / fire_config.exe / tablebuilder.exe；DLL 不再链接）
 ```
 
 ## 3. macOS -> 跨平台内核 模块映射
@@ -255,26 +256,43 @@ MSBuild.exe windows\config\fire_config.vcxproj /p:Configuration=Release /p:Platf
 # 编译后台查字进程 EXE（fire_dictd.exe，命名管道 server + DictManager+Statistics + SQLite）
 MSBuild.exe windows\dictd\fire_dictd.vcxproj /p:Configuration=Release /p:Platform=x64
 
-# 构建 tablebuilder.exe（生成预构建词库用）
+# 构建 tablebuilder.exe（打包进安装包：安装时/配置工具用它现场生成词库）
 cmake -S . -B build -DBUILD_TABLEBUILDER=ON
 cmake --build build --target tablebuilder --config Release
 ```
 
 注意：`windows/config/ConfigApp.rc` 含 UTF-8 中文，文件首行已加 `#pragma code_page(65001)`
-声明，避免 rc.exe 用系统 GBK 误解析。
+声明，避免 rc.exe 用系统 GBK 误解析。三个工程（DLL 除外）编译 sqlite 均经
+`third_party/sqlite3/fire_sqlite3_amalg.c` wrapper 引入 `fire_sqlite_compile_options.h`
+集中裁剪宏（SQLITE_OMIT_*），保持 sqlite3.c/h 原文件不动、便于升级 amalgamation。
 
 ### 5.3 安装包（Inno Setup 6）
 
 ```powershell
-# 一键流程：MSBuild 编译 → tablebuilder 预构建词库 → ISCC 编译 winfire.iss
+# 一键流程：MSBuild 编译三个 VS 工程 → CMake 构建 tablebuilder → 校验词库工具链 →
+# 生成默认 config.json → ISCC 编译 winfire.iss
 powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 
 # 仅编译 installer（跳过 VS 编译，使用现有产物）
 powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 ```
 
+流程（详见 `build_installer.ps1` 注释）：MSBuild 编译 `fire_tsf.dll` / `fire_config.exe` /
+`fire_dictd.exe` → CMake 构建 `tablebuilder.exe` 拷贝到 `installer\staging\` → 用
+tablebuilder + 码表在临时目录**现场构建并校验**词库工具链（产物 < 5MB 判失败，保证
+安装时现场构建与配置工具「生成词库」两条路径都可靠）→ 生成默认 `config.json` 到 staging
+→ ISCC 编译 `winfire.iss`。
+
 产物：`dist\WinFire-Setup.exe`（单文件 installer，含卸载器）。
 安装目标：`%ProgramFiles%\WinFire\`（程序文件） + `%APPDATA%\WinFire\`（用户数据）。
+
+**词库安装时现场生成**：安装包不再预构建 `wb_py_dict.sqlite`（省 ~3.4MB 包体积），改为
+安装完成时由 `winfire.iss` 的 `[Code] BuildDictIfMissing` 调用 `{app}\tablebuilder.exe` +
+`{app}\tables` 码表现场生成（约 1 秒；仅当用户无已有词库，失败不中断安装，可稍后在配置
+工具「词库管理」重建）。安装/卸载前 `KillUserExes` 统一结束三个独立 EXE（fire_dictd /
+fire_config / tablebuilder）；PFR（PendingFileRenameOperations）清理只在
+`InitializeSetup` / `InitializeUninstall` 进行，**不在** post 阶段清（避免撤销
+`DeleteOrDeferDll` 的重启删除指令，详见 winfire.iss 内注释）。
 
 ### 5.4 版本号管理（单一来源 + 强制约束）
 
@@ -408,8 +426,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
 - **资源脚本**：`ConfigApp.rc` 用 `<winres.h>` 替代 `<afxres.h>`，对话框模板与 MFC 版完全兼容。
   含 `IDI_WINFIRE ICON "..\..\resources\icons\winfire.ico"`（ID 101），嵌入 EXE 后用于
   PropertySheet 标题栏、Alt+Tab、任务栏图标。
-- **静态链接**：`/MT` 编译，链接 `comctl32.lib`/`comdlg32.lib`，无外部 DLL 依赖，
-  EXE 体积约 2.7MB（MFC 静态版约 7.4MB，减 62.7%）。
+- **静态链接**：`/MT` 编译，链接 `shell32.lib`/`advapi32.lib`/`comctl32.lib`/`comdlg32.lib`，
+  无外部 DLL 依赖。Release 开启 /O2+/Os+LTCG 优化与死代码消除（`fire_config.vcxproj` 内注释）；
+  sqlite 经 wrapper（`fire_sqlite3_amalg.c` + `fire_sqlite_compile_options.h` 裁剪宏）编译进本
+  EXE——统计页 `CStatisticsPage` 直接持 `fire::Statistics` 读 `statistics.sqlite`。EXE 体积约
+  1.0MB（MFC 静态版约 7.4MB）。
 - **坑点**：`PROPSHEETHEADER.dwFlags` 用 `phpage` 数组（已 `CreatePropertySheetPage` 创建的句柄）时
   **不能**带 `PSH_PROPSHEETPAGE`（该标志表示用 `ppsp` 结构数组，会让 PropertySheet 把 `phpage` 当指针解引用导致 0xC0000005）。
 - 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理。

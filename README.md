@@ -76,9 +76,10 @@ WinFire 是业火五笔输入法在 Windows 平台的非官方移植版。核心
 - 可一键清除全部 / 仅清字词频
 
 ### 安装与部署
-- **Inno Setup 安装包**：`WinFire-Setup.exe`，单文件包含 DLL / 配置工具 / 码表 / 预构建词库
+- **Inno Setup 安装包**：`WinFire-Setup.exe`，单文件包含 DLL / 配置工具 / 后台进程 / 词库构建工具 / 码表 / 默认配置
+- **词库安装时现场生成**：安装包不预构建词库，安装时由 `tablebuilder.exe` + 码表现场生成 `wb_py_dict.sqlite`（约 1 秒；已有词库则保留，失败不中断安装，可稍后在配置工具「词库管理」重建）
 - **自动注册 TSF**：安装时静默 `regsvr32`，卸载时反注册
-- **占用检测**：安装时若 DLL 被宿主进程占用，会提示用户关闭并自动重启
+- **版本化侧载升级**：DLL 文件名带版本号（`fire_tsf_<版本>.dll`），新版以新 CLSID/Profile 侧载注册，无需强制关闭宿主进程；被占用的旧 DLL 标记为重启后删除。安装/卸载前自动结束 fire_dictd / fire_config / tablebuilder 三个独立 EXE，保证干净覆盖与卸载
 - **数据保留**：卸载默认保留用户数据，弹窗询问是否一并删除
 - **PowerShell 脚本**：`install.ps1` / `uninstall.ps1` / `build_installer.ps1`，便于自动化
 
@@ -100,6 +101,9 @@ MSBuild.exe windows\tsf\fire_tsf.vcxproj /p:Configuration=Release /p:Platform=x6
 
 # 编译配置工具 EXE
 MSBuild.exe windows\config\fire_config.vcxproj /p:Configuration=Release /p:Platform=x64
+
+# 编译后台查字进程 EXE（fire_dictd.exe，命名管道 server + 词库/统计 + SQLite）
+MSBuild.exe windows\dictd\fire_dictd.vcxproj /p:Configuration=Release /p:Platform=x64
 
 # 构建词库构建工具
 cmake -S . -B build -DBUILD_TABLEBUILDER=ON
@@ -132,10 +136,10 @@ winFire/
 │   ├── config/                 # 纯 Win32 配置界面（fire_config.exe）
 │   ├── dictd/                  # 后台查字进程（fire_dictd.exe，命名管道 server + SQLite）
 │   └── common/                 # DLL 与后台共用的 Win32 IPC 常量/工具
-├── installer/                  # Inno Setup 脚本与预构建资源
+├── installer/                  # Inno Setup 脚本与 staging 资源（tablebuilder.exe + 默认 config.json）
 ├── scripts/                    # PowerShell 构建/安装/卸载脚本（dev_reload.ps1 供开发热重载）
 ├── resources/                  # 内置码表（86 版 / 98 版五笔 + 拼音）+ icons/（图标资源）
-├── third_party/sqlite3/        # sqlite3 源码（编译进 fire_dictd.exe / tablebuilder.exe；DLL 不再链接）
+├── third_party/sqlite3/        # sqlite3 源码（经 wrapper + 集中裁剪宏编译进三个 EXE：fire_dictd / fire_config / tablebuilder；DLL 不再链接）
 ├── CMakeLists.txt              # 仅构建内核 + 测试 + tablebuilder
 └── AGENTS.md                   # 项目详细架构说明
 ```
