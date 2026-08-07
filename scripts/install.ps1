@@ -80,8 +80,12 @@ Write-Host "[1/5] Checking build artifacts..." -ForegroundColor Yellow
 Write-Host "[2/5] Installing program files..." -ForegroundColor Yellow
 $null = New-Item -ItemType Directory -Path $InstallDir -Force
 
-# 结束可能常驻的旧后台查字进程，释放 fire_dictd.exe 映像占用（否则覆盖失败）。
-& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
+# 结束 WinFire 的独立 EXE（dictd 后台 + config/tablebuilder 工具），释放映像占用，
+# 使新版 EXE 立即覆盖（与 winfire.iss 的 KillUserExes 对称）。fire_tsf.dll 被宿主进程
+# 加载，不在此杀宿主，其映像锁由版本化文件名 + 侧载 + 延迟删除处理。
+foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
+    & taskkill /F /IM $exe 2>&1 | Out-Null
+}
 
 # 反注册并清理旧版本 DLL（若存在），随后写入版本化文件名的新 DLL。
 # 旧 DLL 若仍被宿主进程占用而删不掉，标记为重启后删除，不阻塞安装。

@@ -41,6 +41,15 @@ Get-ChildItem "HKLM:\SOFTWARE\Classes\CLSID" -ErrorAction SilentlyContinue | For
         Remove-Item $_.PSPath -Recurse -Force
     }
 }
+# 防御性：32 位 COM 注册重定向节点。当前 DLL 是 64 位（注册到 HKCR\CLSID 正常），
+# 但若历史上有 32 位宿主注册残留，会在 Wow6432Node 下留键，一并清理。
+Get-ChildItem "HKLM:\SOFTWARE\Classes\Wow6432Node\CLSID" -ErrorAction SilentlyContinue | ForEach-Object {
+    $name = $_.PSChildName
+    if ($name -like "{$clsidPrefix*") {
+        Write-Host "  Remove: HKCR\Wow6432Node\CLSID\$name"
+        Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # ---- 3. 清理 CTF TIP 注册 (HKLM) ----
 Write-Host "[3/7] Cleaning CTF TIP (HKLM)..." -ForegroundColor Yellow
@@ -133,8 +142,11 @@ if (Test-Path $winfireReg) {
     Write-Host "  Remove: HKLM\Software\WinFire"
 }
 
-# 结束常驻后台查字进程（改常驻后不再空闲自退，必须主动杀以释放映像占用）。
-& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
+# 结束 WinFire 的独立 EXE（dictd 后台 + config/tablebuilder 工具），释放映像占用以便
+# 删除程序文件（与 winfire.iss 的 KillUserExes 对称）。
+foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
+    & taskkill /F /IM $exe 2>&1 | Out-Null
+}
 
 # 清理 dictd 自启动项（install.ps1 写 HKLM\Run；Inno 安装包写 HKCU\Run；两处都清保证干净）。
 foreach ($hive in @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",

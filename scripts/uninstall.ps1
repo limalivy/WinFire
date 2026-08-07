@@ -110,8 +110,12 @@ if (Test-Path $userProfileBase) {
 # 3. Remove program files
 Write-Host "[3/4] Removing program files..." -ForegroundColor Yellow
 
-# 结束常驻的后台查字进程（改常驻后不再空闲自退，必须主动杀以释放映像占用）。
-& taskkill /F /IM fire_dictd.exe 2>&1 | Out-Null
+# 结束 WinFire 的独立 EXE（dictd 后台 + config/tablebuilder 工具），释放映像占用以便
+# 删除 {app} 目录（与 winfire.iss 的 KillUserExes 对称）。fire_tsf.dll 的映像锁由
+# 下面的 MoveFileEx 延迟删除处理，不杀宿主进程。
+foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
+    & taskkill /F /IM $exe 2>&1 | Out-Null
+}
 if (Test-Path $InstallDir) {
     # 先处理可能仍被宿主进程占用的 DLL：删不掉则标记重启后删除，避免整体删除失败。
     $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'

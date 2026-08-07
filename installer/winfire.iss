@@ -277,16 +277,25 @@ begin
   end;
 end;
 
-// 结束常驻的后台查字进程 fire_dictd.exe。
-// 后台进程为 in-process DLL 之外的独立 EXE，安装/升级/卸载前需先结束，
-// 否则其映像被占用导致 fire_dictd.exe 无法被覆盖或删除（虽有 restartreplace
-// 兜底，但主动结束可让新版立即生效、避免延迟到重启）。
-// dictd 改为常驻进程（不再空闲退出）；杀掉后本次会话不再重生，下次登录由 HKCU\Run 拉起。
-procedure KillDictd();
+// 主动结束 WinFire 的独立 EXE（fire_dictd.exe / fire_config.exe / tablebuilder.exe）。
+// 这些 EXE 不像 fire_tsf.dll 那样会被宿主进程映像锁长期占用，但用户可能正开着
+// 配置工具（fire_config.exe）或在词库管理页调用 tablebuilder.exe。安装/升级/卸载前
+// 先结束它们，释放映像占用，使新版 EXE 立即覆盖、卸载时能干净删除 {app} 目录；
+// 避免 restartreplace 在卸载阶段不生效时残留文件导致「上次卸载未完成」。
+// fire_tsf.dll 被宿主进程（Word/Chrome/explorer/ctfmon）加载，这里不杀宿主，
+// 其映像锁由版本化文件名 + 侧载 + DeleteOrDeferDll(MoveFileEx 延迟删除) 处理。
+// fire_dictd.exe 改为常驻进程（不再空闲退出），杀掉后本次会话不再重生，
+// 下次登录由 HKCU\Run 拉起。
+procedure KillUserExes();
 var
   ResultCode: Integer;
 begin
+  // 三个 EXE 都结束；不存在对应进程时 taskkill 返回非零，忽略即可（不阻断流程）。
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fire_dictd.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fire_config.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM tablebuilder.exe',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
@@ -328,8 +337,9 @@ begin
   // 安装前先清理上次卸载残留的 PendingFileRenameOperations 条目，
   // 避免 Inno Setup 误判为"上一次安装/卸载未完成"而拒绝安装。
   CleanWinFirePendingOps();
-  // 结束可能常驻的旧后台查字进程，释放 fire_dictd.exe 映像占用。
-  KillDictd();
+  // 结束可能常驻/正被用户打开的 EXE（dictd 后台 + config/tablebuilder 工具），
+  // 释放映像占用，保证新版 EXE 能即时覆盖（不必走 restartreplace 延迟替换）。
+  KillUserExes();
   Result := True;
 end;
 
@@ -341,9 +351,10 @@ begin
     // 现场构建词库（ssPostInstall 时 [Files] 已全部就位，且早于 [Run] 启动 dictd，
     // 保证 dictd 首次启动时 sqlite 已存在）。仅当用户无已有词库时触发。
     BuildDictIfMissing();
-    // DeleteOrDeferDll 可能又写入了新的 PFR 条目（旧 DLL 仍被占用），
-    // 再次清理确保不留残余。
-    CleanWinFirePendingOps();
+    // 注意：此处【不】清理 PFR。CleanupOldTsfDlls 中 DeleteOrDeferDll 对仍被占用的
+    // 旧版本 DLL 写入了 MoveFileEx 重启删除条目，立即清空会让旧 DLL 永远删不掉
+    // （文件留在 {app}，重启删除指令被撤）。PFR 条目留待系统重启删除，或下次安装
+    // 开头由 InitializeSetup 的 CleanWinFirePendingOps 兜底清（若已随重启删完）。
   end;
 end;
 
@@ -351,8 +362,8 @@ function InitializeUninstall(): Boolean;
 begin
   // 卸载前清理残留的 PFR 条目，保证卸载流程不被残留状态阻塞
   CleanWinFirePendingOps();
-  // 结束常驻的后台查字进程，释放 fire_dictd.exe 占用以便删除。
-  KillDictd();
+  // 结束常驻后台 + 正被用户打开的配置/词库工具，释放映像占用以便删除 {app}。
+  KillUserExes();
   Result := True;
 end;
 
@@ -445,8 +456,10 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
-    // 卸载末尾清理 PFR 残留（卸载过程中 DeleteOrDeferDll 可能又写入了条目）
-    CleanWinFirePendingOps();
+    // 注意：此处【不】清理 PFR。被宿主进程占用的 DLL 在 usUninstall 阶段已由
+    // DeleteOrDeferDll 写入 MoveFileEx 重启删除条目，若在此清空会让这些 DLL 永远
+    // 删不掉（{app} 里残留文件 + 重启删除指令被撤）。PFR 条目应留待系统重启时由
+    // 内核删除文件，或下次安装开头由 InitializeSetup 的 CleanWinFirePendingOps 兜底清。
     userDataDir := ExpandConstant('{userappdata}\WinFire');
     if DirExists(userDataDir) then
     begin
