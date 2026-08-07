@@ -365,7 +365,40 @@ bool TsfInputClient::IsConsoleHost() const {
 void TsfInputClient::show_candidates(const fire::CandidatesView& view) {
     FIRE_LOG(L"[WinFire] show_candidates: cand=%p list_size=%zu origin='%hs'\n",
              (void*)candWindow_, view.list.size(), view.original_string.c_str());
-    if (candWindow_) candWindow_->Show(view);
+    if (candWindow_) {
+        // SearchHost.exe/UWP 等沙箱宿主：候选窗必须以宿主活动视图窗口为 owner 才可见。
+        // 每次显示前刷新 owner（跨应用切换时 context 变化，owner 需更新）。
+        HWND owner = GetActiveViewWnd();
+        if (owner) candWindow_->Reparent(owner);
+        candWindow_->Show(view);
+    }
+}
+
+HWND TsfInputClient::GetActiveViewWnd() {
+    // 取宿主活动视图窗口，供候选窗作 owner。失败回退 ::GetFocus()。
+    // 调用链与 get_caret_rect 一致：session_.pContext -> GetActiveView -> GetWnd。
+    if (!session_.pContext) {
+        HWND fw = ::GetFocus();
+        FIRE_LOG(L"[WinFire] GetActiveViewWnd: pContext null, fallback GetFocus=%p\n", (void*)fw);
+        return fw;
+    }
+    ITfContextView* pView = nullptr;
+    if (FAILED(session_.pContext->GetActiveView(&pView)) || !pView) {
+        HWND fw = ::GetFocus();
+        FIRE_LOG(L"[WinFire] GetActiveViewWnd: GetActiveView failed/null, fallback GetFocus=%p\n", (void*)fw);
+        return fw;
+    }
+    HWND wnd = nullptr;
+    HRESULT hr = pView->GetWnd(&wnd);
+    pView->Release();
+    if (FAILED(hr) || !wnd) {
+        HWND fw = ::GetFocus();
+        FIRE_LOG(L"[WinFire] GetActiveViewWnd: GetWnd hr=0x%lX null, fallback GetFocus=%p\n",
+                 (unsigned long)hr, (void*)fw);
+        return fw;
+    }
+    FIRE_LOG(L"[WinFire] GetActiveViewWnd: view wnd=%p\n", (void*)wnd);
+    return wnd;
 }
 
 void TsfInputClient::hide_candidates() {

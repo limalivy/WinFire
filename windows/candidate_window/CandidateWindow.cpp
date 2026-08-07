@@ -119,18 +119,27 @@ bool CandidateWindowController::Create(HINSTANCE hInst) {
     ATOM atom = RegisterClassExW(&wc);
     FIRE_LOG(L"[WinFire] CandidateWindow: RegisterClassExW atom=%u\n", (unsigned)atom);
 
-    // 无焦点浮窗：TOPMOST + NOACTIVATE + TOOLWINDOW + LAYERED（用 UpdateLayeredWindow 逐像素透明）
-    hwnd_ = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-        kClassName, L"", WS_POPUP,
-        0, 0, 10, 10, nullptr, nullptr, hInst, this);
-    if (!hwnd_) {
+    // 首次创建用 nullptr owner（Activate 时还没有宿主活动视图窗口信息）。
+    // Reparent 会在首次 show 前（owner 已知）按需销毁重建为带 owner 的窗口。
+    if (!CreateWindowOwned(nullptr)) {
         FIRE_LOG(L"[WinFire] CandidateWindow: CreateWindowExW FAILED err=%lu\n", GetLastError());
         return false;
     }
     FIRE_LOG(L"[WinFire] CandidateWindow: CreateWindowExW OK hwnd=%p\n", (void*)hwnd_);
     FIRE_LOG_EXIT();
     return true;
+}
+
+HWND CandidateWindowController::CreateWindowOwned(HWND owner) {
+    // 复用 Create() 已完成的 GdiplusStartup + RegisterClassExW，只创建窗口。
+    // 无焦点浮窗：TOPMOST + NOACTIVATE + TOOLWINDOW + LAYERED（用 UpdateLayeredWindow 逐像素透明）
+    // owner 作为 hWndParent：对 WS_POPUP 即 owner（非 child parent）。
+    hwnd_ = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        kClassName, L"", WS_POPUP,
+        0, 0, 10, 10, owner, nullptr, hInst_, this);
+    ownerHwnd_ = owner;  // 记录本次创建的 owner
+    return hwnd_;
 }
 
 void CandidateWindowController::Destroy() {
@@ -140,8 +149,30 @@ void CandidateWindowController::Destroy() {
     cachedFont_.reset();
     cachedFontFamily_.reset();
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
+    ownerHwnd_ = nullptr;  // 窗口销毁后 owner 同步失效
     if (gdiplusToken_) { GdiplusShutdown(gdiplusToken_); gdiplusToken_ = 0; }
     FIRE_LOG_EXIT();
+}
+
+void CandidateWindowController::Reparent(HWND owner) {
+    // 仅当 owner 真正变化且窗口已创建时才重建，避免每键重复。
+    if (!hwnd_ || !owner || owner == ownerHwnd_) {
+        FIRE_LOG(L"[WinFire] Reparent: skip (hwnd=%p owner=%p curOwner=%p)\n",
+                 (void*)hwnd_, (void*)owner, (void*)ownerHwnd_);
+        return;
+    }
+    // 关键：不能用 SetWindowLongPtr(GWLP_HWNDPARENT) 改运行中窗口的 owner——
+    // 在 SearchApp.exe/AppContainer 宿主里它返回 ERROR_INVALID_PARAMETER（实测 err=87），
+    // owner 根本设不上，候选窗在沙箱合成器里不可见。改为像 weasel 那样销毁重建：
+    // DestroyWindow 后用新 owner 调 CreateWindowExW，owner 在窗口创建时内置。
+    HWND oldHwnd = hwnd_;
+    HWND oldOwner = ownerHwnd_;
+    visible_ = false;  // DestroyWindow 后可见状态丢失
+    DestroyWindow(hwnd_);
+    hwnd_ = nullptr;
+    HWND newHwnd = CreateWindowOwned(owner);
+    FIRE_LOG(L"[WinFire] Reparent: REBUILD old_hwnd=%p -> new_hwnd=%p owner %p -> %p ok=%d\n",
+             (void*)oldHwnd, (void*)newHwnd, (void*)oldOwner, (void*)owner, newHwnd ? 1 : 0);
 }
 
 LRESULT CALLBACK CandidateWindowController::WndProc(HWND hwnd, UINT msg, WPARAM wParam,

@@ -72,6 +72,11 @@ private:
     // 且无法在提交时撤销，故需特殊处理（不写占位 preedit）。
     bool IsConsoleHost() const;
 
+    // 取宿主活动视图窗口（ITfContextView::GetWnd），失败时回退 ::GetFocus()。
+    // SearchHost.exe/UWP 等 AppContainer 沙箱下，候选窗必须以该窗口为 owner 才能
+    // 显示（参考 weasel _GetActiveWnd）。
+    HWND GetActiveViewWnd();
+
     // 在组字区写入文本（UTF-8）。空串表示清空组字区。
     void SetCompositionText(const std::wstring& text);
     // 结束组字并把文本落地到宿主

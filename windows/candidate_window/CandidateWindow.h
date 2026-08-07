@@ -31,6 +31,14 @@ public:
     bool Create(HINSTANCE hInst);
     void Destroy();
 
+    // 重新设置候选窗的 owner（对 WS_POPUP 即 owner）。
+    // SearchHost.exe / UWP 等 AppContainer 沙箱宿主下，无 owner 的顶层工具窗
+    // 会落在沉浸式 UI 的合成器之外，候选框不可见；必须以宿主活动视图窗口为
+    // owner（参考 weasel _GetActiveWnd）。实现方式：owner 变化时销毁原窗口、
+    // 用新 owner 重新 CreateWindowExW（SetWindowLongPtr 改运行中窗口的 owner
+    // 在 AppContainer 宿主下会失败）。
+    void Reparent(HWND owner);
+
     // 显示/更新候选窗
     void Show(const fire::CandidatesView& view);
     void Hide();
@@ -49,6 +57,7 @@ private:
     const fire::Config& config_;
     HINSTANCE hInst_ = nullptr;
     HWND hwnd_ = nullptr;
+    HWND ownerHwnd_ = nullptr;  // 当前 owner，Reparent 仅在变化时才销毁重建
     ULONG_PTR gdiplusToken_ = 0;
 
     fire::CandidatesView view_;
@@ -81,6 +90,10 @@ private:
     POINT ComputePosition(const SIZE& sz);  // 依据 caret 计算窗口左上角
     int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中，-2 命中菜单图标
     void LaunchConfigTool();          // 启动 fire_config.exe
+
+    // 仅创建窗口（CreateWindowExW），owner 作为 hWndParent 传入；GDI+/RegisterClass 由
+    // Create() 一次性完成，本方法只复用已注册的类。供 Create 与 Reparent(销毁重建) 共用。
+    HWND CreateWindowOwned(HWND owner);
 
     // 获取当前窗口所在显示器的 DPI 缩放因子（1.0 = 96 DPI）
     // 用于在高 DPI 显示器（4K/Retina）上等比放大字体与间距。
