@@ -37,6 +37,7 @@ void CStatisticsPage::RefreshView() {
     if (!stats.is_open()) {
         firecfg::SetText(hwnd, IDC_STATIC_TOTAL_COUNT, L"累计输入字数：（暂无数据）");
         firecfg::SetText(hwnd, IDC_STATIC_UNIQUE_COUNT, L"不同词条数：0");
+        AutoSizeWordColumn();
         return;
     }
     wchar_t buf[128];
@@ -58,6 +59,21 @@ void CStatisticsPage::RefreshView() {
         firecfg::LvSetItem(hwnd, IDC_LIST_HANZI_FREQ, r, 1, buf);
         ++r;
     }
+    AutoSizeWordColumn();
+}
+
+// 数据填充完成后调整"词"列宽度，使其填满控件客户区剩余空间（扣除"次数"列 80px）。
+// 必须在数据填充后调用：此时垂直滚动条是否出现已确定，GetClientRect 反映的是真实
+// 可用宽度（已扣除滚动条）。若在填充前测量，滚动条出现后可用宽度变小，两列总和会
+// 超出可视区，触发水平滚动条，把"次数"列右半挤出可视范围。
+void CStatisticsPage::AutoSizeWordColumn() {
+    HWND lv = GetDlgItem(hwnd, IDC_LIST_HANZI_FREQ);
+    if (!lv) return;
+    RECT rc = {0};
+    GetClientRect(lv, &rc);
+    int wordWidth = (rc.right - rc.left) - 80;  // 80 为"次数"列固定宽
+    if (wordWidth < 60) wordWidth = 60;          // 下限保护，避免控件过窄时挤压
+    SendMessageW(lv, LVM_SETCOLUMNWIDTH, 0, (LPARAM)wordWidth);
 }
 
 void CStatisticsPage::OnCommand(WPARAM wParam, LPARAM /*lParam*/) {

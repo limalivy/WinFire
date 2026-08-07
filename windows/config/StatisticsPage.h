@@ -35,6 +35,7 @@ protected:
 
 private:
     void RefreshView();
+    void AutoSizeWordColumn();  // 数据填充后调整"词"列宽，填满剩余客户区
 };
 
 HPROPSHEETPAGE CreateStatisticsPage(CStatisticsPage& page);
