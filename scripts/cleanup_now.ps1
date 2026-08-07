@@ -18,7 +18,7 @@ $clsidPrefix = "8E9F0B21-3C4D-4E5A-9B7C-1F2A3B"
 $installDir   = "$env:ProgramFiles\WinFire"
 
 # ---- 1. regsvr32 /u 所有已安装的 DLL ----
-Write-Host "[1/5] Unregistering TSF DLLs..." -ForegroundColor Yellow
+Write-Host "[1/7] Unregistering TSF DLLs..." -ForegroundColor Yellow
 if (Test-Path $installDir) {
     Get-ChildItem -Path $installDir -Filter "fire_tsf*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
         Write-Host "  Unregister: $($_.Name)"
@@ -33,7 +33,7 @@ if (Test-Path $installDir) {
 }
 
 # ---- 2. 清理 COM CLSID 注册 (HKCR\CLSID) ----
-Write-Host "[2/5] Cleaning COM CLSID keys..." -ForegroundColor Yellow
+Write-Host "[2/7] Cleaning COM CLSID keys..." -ForegroundColor Yellow
 Get-ChildItem "HKLM:\SOFTWARE\Classes\CLSID" -ErrorAction SilentlyContinue | ForEach-Object {
     $name = $_.PSChildName
     if ($name -like "{$clsidPrefix*") {
@@ -43,7 +43,7 @@ Get-ChildItem "HKLM:\SOFTWARE\Classes\CLSID" -ErrorAction SilentlyContinue | For
 }
 
 # ---- 3. 清理 CTF TIP 注册 (HKLM) ----
-Write-Host "[3/5] Cleaning CTF TIP (HKLM)..." -ForegroundColor Yellow
+Write-Host "[3/7] Cleaning CTF TIP (HKLM)..." -ForegroundColor Yellow
 $tipKey = "HKLM:\SOFTWARE\Microsoft\CTF\TIP"
 if (Test-Path $tipKey) {
     Get-ChildItem $tipKey -ErrorAction SilentlyContinue | ForEach-Object {
@@ -56,7 +56,7 @@ if (Test-Path $tipKey) {
 }
 
 # ---- 4. 清理 CTF TIP 注册 (HKCU) ----
-Write-Host "[4/5] Cleaning CTF TIP (HKCU)..." -ForegroundColor Yellow
+Write-Host "[4/7] Cleaning CTF TIP (HKCU)..." -ForegroundColor Yellow
 $hklmTipKey = "HKCU:\SOFTWARE\Microsoft\CTF\TIP"
 if (Test-Path $hklmTipKey) {
     Get-ChildItem $hklmTipKey -ErrorAction SilentlyContinue | ForEach-Object {
@@ -68,8 +68,63 @@ if (Test-Path $hklmTipKey) {
     }
 }
 
-# ---- 5. 清理其他残留 ----
-Write-Host "[5/5] Cleaning misc..." -ForegroundColor Yellow
+# ---- 5. 清理用户级 SortOrder\AssemblyItem 残留（「不可用的输入法」根因） ----
+# InstallLayoutOrTip(ILOT_UNINSTALL) 不可靠，SortOrder\AssemblyItem\<langid>\<profile>\<index>
+# 中的 WinFire 条目不会随之删除，导致系统设置输入法列表残留「不可用的输入法」。
+# 此处直接扫描 HKCU 注册表，按 CLSID 值匹配 WinFire 基 GUID 模式后删除。
+Write-Host "[5/7] Cleaning SortOrder\AssemblyItem (HKCU)..." -ForegroundColor Yellow
+$sortOrderBase = "HKCU:\Software\Microsoft\CTF\SortOrder\AssemblyItem"
+if (Test-Path $sortOrderBase) {
+    Get-ChildItem $sortOrderBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        Get-ChildItem $langKey.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+            $profKey = $_
+            Get-ChildItem $profKey.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+                $entry = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                if ($entry.CLSID -and $entry.CLSID -like "{$clsidPrefix*") {
+                    $relPath = $langKey.PSChildName + "\" + $profKey.PSChildName + "\" + $_.PSChildName
+                    Write-Host "  Remove: HKCU\CTF\SortOrder\AssemblyItem\$relPath"
+                    Remove-Item $_.PSPath -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+} else {
+    Write-Host "  (SortOrder\AssemblyItem not found)" -ForegroundColor DarkGray
+}
+
+# ---- 6. 清理用户级 User Profile 输入法列表（Get-WinUserLanguageList 数据源） ----
+# HKCU\Control Panel\International\User Profile\<langid> 下的值名为
+# "<langid>:{CLSID}{Profile}"，是 Get-WinUserLanguageList 与系统设置
+# 「替代默认输入法」下拉的数据源。InstallLayoutOrTip(ILOT_UNINSTALL) 在部分
+# Windows 版本上无法移除该处的 WinFire 值，导致卸载后仍残留「不可用的输入法」。
+Write-Host "[6/7] Cleaning User Profile input methods (HKCU)..." -ForegroundColor Yellow
+$userProfileBase = "HKCU:\Control Panel\International\User Profile"
+if (Test-Path $userProfileBase) {
+    Get-ChildItem $userProfileBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        # Get-Item 返回 RegistryKey，其 .Property 数组只含真实注册表值名
+        # （不含 PSPath/PSChildName 等 PSObject 元数据，避免误匹配）。
+        $key = Get-Item $langKey.PSPath -ErrorAction SilentlyContinue
+        if ($key) {
+            $toRemove = @()
+            foreach ($valName in $key.Property) {
+                if ($valName -like "*{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B*") {
+                    $toRemove += $valName
+                }
+            }
+            foreach ($name in $toRemove) {
+                Write-Host "  Remove: $($langKey.PSChildName)\$name"
+                Remove-ItemProperty -Path $langKey.PSPath -Name $name -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+} else {
+    Write-Host "  (User Profile not found)" -ForegroundColor DarkGray
+}
+
+# ---- 7. 清理其他残留 ----
+Write-Host "[7/7] Cleaning misc..." -ForegroundColor Yellow
 
 # HKLM\Software\WinFire
 $winfireReg = "HKLM:\Software\WinFire"
@@ -148,6 +203,36 @@ Get-ChildItem "HKLM:\SOFTWARE\Classes\CLSID" -ErrorAction SilentlyContinue | For
 }
 Get-ChildItem "HKLM:\SOFTWARE\Microsoft\CTF\TIP" -ErrorAction SilentlyContinue | ForEach-Object {
     if ($_.PSChildName -like "{$clsidPrefix*") { $left += "CTF\TIP\$($_.PSChildName)" }
+}
+# 检查 SortOrder\AssemblyItem 残留
+$sortOrderBase = "HKCU:\Software\Microsoft\CTF\SortOrder\AssemblyItem"
+if (Test-Path $sortOrderBase) {
+    Get-ChildItem $sortOrderBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        Get-ChildItem $langKey.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+                $entry = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                if ($entry.CLSID -and $entry.CLSID -like "{$clsidPrefix*") {
+                    $left += "SortOrder\$($langKey.PSChildName)\$($_.PSChildName)"
+                }
+            }
+        }
+    }
+}
+# 检查 User Profile 输入法列表残留
+$userProfileBase = "HKCU:\Control Panel\International\User Profile"
+if (Test-Path $userProfileBase) {
+    Get-ChildItem $userProfileBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        $key = Get-Item $langKey.PSPath -ErrorAction SilentlyContinue
+        if ($key) {
+            foreach ($valName in $key.Property) {
+                if ($valName -like "*{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B*") {
+                    $left += "UserProfile\$($langKey.PSChildName)\$valName"
+                }
+            }
+        }
+    }
 }
 if ($left.Count -eq 0) {
     Write-Host "  All clean!" -ForegroundColor Green

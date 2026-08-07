@@ -318,6 +318,64 @@ begin
   Result := True;
 end;
 
+// 把一段 PowerShell 脚本写到临时文件、执行、删除。CleanSortOrderAssemblyItems
+// 与 CleanUserProfileInputMethods 的脚手架相同，抽此辅助过程消除重复。
+procedure RunCleanupScript(const scriptName, psBody: String);
+var
+  psPath, psArgs: String;
+  ResultCode: Integer;
+begin
+  psPath := ExpandConstant('{tmp}\' + scriptName);
+  SaveStringToFile(psPath, psBody, False);
+  psArgs := '-NoProfile -ExecutionPolicy Bypass -File "' + psPath + '"';
+  Exec('powershell.exe', psArgs, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  DeleteFile(psPath);
+end;
+
+// 清理用户级 SortOrder\AssemblyItem 中的 WinFire 残留条目。
+// regsvr32 /u（[UninstallRun]）调用 DllUnregisterServer 会清理这些，但若 DLL 已被
+// 删除则 regsvr32 失败，此处用 PowerShell 兜底直接扫描注册表删除。
+procedure CleanSortOrderAssemblyItems();
+begin
+  RunCleanupScript('_wf_sortorder_cleanup.ps1',
+    '$p = "8E9F0B21-3C4D-4E5A-9B7C-1F2A3B"' + #13#10 +
+    '$b = "HKCU:\Software\Microsoft\CTF\SortOrder\AssemblyItem"' + #13#10 +
+    'if (Test-Path $b) {' + #13#10 +
+    '  Get-ChildItem $b | ForEach-Object {' + #13#10 +
+    '    $lang = $_' + #13#10 +
+    '    Get-ChildItem $lang.PSPath | ForEach-Object {' + #13#10 +
+    '      Get-ChildItem $_.PSPath | ForEach-Object {' + #13#10 +
+    '        $e = Get-ItemProperty $_.PSPath' + #13#10 +
+    '        if ($e.CLSID -and $e.CLSID -match $p) {' + #13#10 +
+    '          Remove-Item $_.PSPath -Force' + #13#10 +
+    '        }' + #13#10 +
+    '      }' + #13#10 +
+    '    }' + #13#10 +
+    '  }' + #13#10 +
+    '}');
+end;
+
+// 清理 HKCU\Control Panel\International\User Profile 中的 WinFire 输入法条目。
+// Get-WinUserLanguageList 与「替代默认输入法」下拉均从此处读，ILOT_UNINSTALL 不可靠，
+// 直接扫描删除，防止残留「不可用的输入法」。
+procedure CleanUserProfileInputMethods();
+begin
+  RunCleanupScript('_wf_userprofile_cleanup.ps1',
+    '$p = "8E9F0B21-3C4D-4E5A-9B7C-1F2A3B"' + #13#10 +
+    '$b = "HKCU:\Control Panel\International\User Profile"' + #13#10 +
+    'if (Test-Path $b) {' + #13#10 +
+    '  Get-ChildItem $b | ForEach-Object {' + #13#10 +
+    '    $lang = $_' + #13#10 +
+    '    $key = Get-Item $lang.PSPath' + #13#10 +
+    '    if ($key) {' + #13#10 +
+    '      $toRemove = @()' + #13#10 +
+    '      foreach ($v in $key.Property) { if ($v -like "*$p*") { $toRemove += $v } }' + #13#10 +
+    '      foreach ($n in $toRemove) { Remove-ItemProperty -Path $lang.PSPath -Name $n -Force }' + #13#10 +
+    '    }' + #13#10 +
+    '  }' + #13#10 +
+    '}');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   userDataDir, appDir, pattern, foundPath: String;
@@ -339,6 +397,12 @@ begin
         FindClose(fr);
       end;
     end;
+    // 兜底清理用户级 SortOrder\AssemblyItem 中的 WinFire 残留条目
+    // （DllUnregisterServer 已清理，此处防 DLL 已删时 regsvr32 失败的兜底）。
+    CleanSortOrderAssemblyItems();
+    // 兜底清理 HKCU\Control Panel\International\User Profile 中的 WinFire 条目
+    // （Get-WinUserLanguageList 数据源，残留会显示「不可用的输入法」）。
+    CleanUserProfileInputMethods();
   end;
 
   if CurUninstallStep = usPostUninstall then

@@ -56,6 +56,57 @@ foreach ($hive in @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
     }
 }
 
+# 清理用户级 SortOrder\AssemblyItem 中的 WinFire 残留条目。
+# regsvr32 /u 调用 DllUnregisterServer 会清理这些，但如果 DLL 已被删除则无法调用，
+# 此处兜底直接扫描注册表删除，防止残留「不可用的输入法」。
+$clsidPrefix = "8E9F0B21-3C4D-4E5A-9B7C-1F2A3B"
+$sortOrderBase = "HKCU:\Software\Microsoft\CTF\SortOrder\AssemblyItem"
+if (Test-Path $sortOrderBase) {
+    $cleaned = $false
+    Get-ChildItem $sortOrderBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        Get-ChildItem $langKey.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+                $entry = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                if ($entry.CLSID -and $entry.CLSID -like "{$clsidPrefix*") {
+                    Remove-Item $_.PSPath -Force -ErrorAction SilentlyContinue
+                    $cleaned = $true
+                }
+            }
+        }
+    }
+    if ($cleaned) {
+        Write-Host "  [OK] Removed SortOrder\AssemblyItem WinFire entries" -ForegroundColor Green
+    }
+}
+
+# 清理 HKCU\Control Panel\International\User Profile 中的 WinFire 输入法条目。
+# Get-WinUserLanguageList 与「替代默认输入法」下拉均从此处读，ILOT_UNINSTALL 不可靠，
+# 直接扫描删除，防止残留「不可用的输入法」。
+$userProfileBase = "HKCU:\Control Panel\International\User Profile"
+if (Test-Path $userProfileBase) {
+    $cleanedUp = $false
+    Get-ChildItem $userProfileBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $langKey = $_
+        $key = Get-Item $langKey.PSPath -ErrorAction SilentlyContinue
+        if ($key) {
+            $toRemove = @()
+            foreach ($valName in $key.Property) {
+                if ($valName -like "*{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B*") {
+                    $toRemove += $valName
+                }
+            }
+            foreach ($name in $toRemove) {
+                Remove-ItemProperty -Path $langKey.PSPath -Name $name -Force -ErrorAction SilentlyContinue
+                $cleanedUp = $true
+            }
+        }
+    }
+    if ($cleanedUp) {
+        Write-Host "  [OK] Removed User Profile WinFire entries" -ForegroundColor Green
+    }
+}
+
 # 3. Remove program files
 Write-Host "[3/4] Removing program files..." -ForegroundColor Yellow
 

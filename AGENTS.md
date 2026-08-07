@@ -368,7 +368,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipBuild
   字符串格式 `"<langid十六进制>:<CLSID{大括号}><Profile{大括号}>"`，如 `0804:{...}{...}`），
   把 TIP 写入**当前用户**输入法列表（HKCU）。Windows「设置 → 替代默认输入法」下拉枚举的正是
   用户级列表，仅系统级注册不会出现在下拉里。`DllUnregisterServer` 与 `CleanupStaleRegistrations`
-  对称调用 `InstallLayoutOrTip(..., ILOT_UNINSTALL=1)` 清理。**管理员≠登录用户的限制**：regsvr32
+  对称调用 `InstallLayoutOrTip(..., ILOT_UNINSTALL=1)` 清理。**`ILOT_UNINSTALL` 不可靠的兜底**：
+  该 API 在部分 Windows 版本上无法移除 `HKCU\Software\Microsoft\CTF\SortOrder\AssemblyItem` 与
+  `HKCU\Control Panel\International\User Profile` 中的 WinFire 条目，导致卸载后系统设置残留
+  「不可用的输入法」。`DllRegisterServer`/`DllUnregisterServer` 额外调用 `CleanupSortOrderAssemblyItems()`
+  与 `CleanupUserProfileInputMethods()` 直接扫描注册表删除匹配 WinFire 基 GUID 前缀的条目
+  （Register 时先清全部再由 `InstallLayoutOrTip(0)` 重新添加当前版本；Unregister 时全清）。
+  `cleanup_now.ps1` / `uninstall.ps1` / `winfire.iss` 均含对称的 PowerShell 兜底清理
+  （防 DLL 已删时 `regsvr32 /u` 失败）。**管理员≠登录用户的限制**：regsvr32
   以调用者身份运行，`InstallLayoutOrTip` 写入调用者的 HKCU；若以管理员账号提权安装而管理员 ≠
   登录用户，需登录用户在「设置 → 语言 → 添加键盘」手动添加一次以触发当前用户安装（此为 TSF
   已知限制，weasel 同样存在，不在代码层解决）。

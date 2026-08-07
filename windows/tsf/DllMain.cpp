@@ -7,6 +7,7 @@
 #include <atlbase.h>
 #include <atlcom.h>
 #include <string>
+#include <vector>
 
 #include "Globals.h"
 #include "DebugLog.h"
@@ -201,6 +202,141 @@ static void CleanupStaleRegistrations() {
     }
 }
 
+// 直接清理 HKCU\Software\Microsoft\CTF\SortOrder\AssemblyItem 下所有 WinFire 条目。
+// InstallLayoutOrTip(ILOT_UNINSTALL) 在部分 Windows 版本上不可靠，无法移除
+// SortOrder\AssemblyItem\<langid>\<profile-guid>\<index> 中的条目，导致卸载后
+// 「文本服务和输入语言」列表残留「不可用的输入法」。此函数直接扫描注册表，
+// 按 CLSID 值匹配 WinFire 基 GUID 模式后删除对应编号子键，不依赖 ILOT_UNINSTALL。
+static void CleanupSortOrderAssemblyItems() {
+    HKEY hSortOrder = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\CTF\\SortOrder\\AssemblyItem",
+                      0, KEY_READ, &hSortOrder) != ERROR_SUCCESS)
+        return;
+
+    // 枚举 langid 子键（如 "0x00000804"）
+    for (int langIdx = 0; ; ++langIdx) {
+        wchar_t langName[32] = {0};
+        DWORD langNameLen = 32;
+        FILETIME ft;
+        if (RegEnumKeyExW(hSortOrder, langIdx, langName, &langNameLen,
+                          nullptr, nullptr, nullptr, &ft) != ERROR_SUCCESS)
+            break;
+
+        HKEY hLang = nullptr;
+        if (RegOpenKeyExW(hSortOrder, langName, 0, KEY_READ, &hLang) != ERROR_SUCCESS)
+            continue;
+
+        // 枚举 profile-guid 子键（如 "{34745C63-...}"）
+        for (int profIdx = 0; ; ++profIdx) {
+            wchar_t profName[40] = {0};
+            DWORD profNameLen = 40;
+            if (RegEnumKeyExW(hLang, profIdx, profName, &profNameLen,
+                              nullptr, nullptr, nullptr, &ft) != ERROR_SUCCESS)
+                break;
+
+            HKEY hProf = nullptr;
+            if (RegOpenKeyExW(hLang, profName, 0, KEY_READ | KEY_WRITE, &hProf) != ERROR_SUCCESS)
+                continue;
+
+            // 枚举编号子键（如 "00000002"），删除 CLSID 匹配 WinFire 的条目。
+            // 删除后子键索引前移，不递增 entryIdx；未删除时才递增。
+            for (int entryIdx = 0; ; ) {
+                wchar_t entryName[32] = {0};
+                DWORD entryNameLen = 32;
+                if (RegEnumKeyExW(hProf, entryIdx, entryName, &entryNameLen,
+                                  nullptr, nullptr, nullptr, &ft) != ERROR_SUCCESS)
+                    break;
+
+                HKEY hEntry = nullptr;
+                if (RegOpenKeyExW(hProf, entryName, 0, KEY_READ, &hEntry) != ERROR_SUCCESS) {
+                    ++entryIdx;
+                    continue;
+                }
+
+                wchar_t clsidVal[40] = {0};
+                DWORD valLen = sizeof(clsidVal);
+                DWORD valType = 0;
+                bool isWinFire = false;
+                if (RegQueryValueExW(hEntry, L"CLSID", nullptr, &valType,
+                                     (LPBYTE)clsidVal, &valLen) == ERROR_SUCCESS &&
+                    valType == REG_SZ) {
+                    GUID guid = {0};
+                    if (SUCCEEDED(CLSIDFromString(clsidVal, &guid)) &&
+                        IsWinFireBaseClsid(guid)) {
+                        isWinFire = true;
+                    }
+                }
+                RegCloseKey(hEntry);
+
+                if (isWinFire) {
+                    RegDeleteKeyW(hProf, entryName);
+                    continue;  // 索引前移，重试同一 entryIdx
+                }
+                ++entryIdx;
+            }
+            RegCloseKey(hProf);
+        }
+        RegCloseKey(hLang);
+    }
+    RegCloseKey(hSortOrder);
+}
+
+// 直接清理 HKCU\Control Panel\International\User Profile 下所有 WinFire 输入法条目。
+// Get-WinUserLanguageList 与系统设置「替代默认输入法」均从此处读取用户级输入法列表。
+// InstallLayoutOrTip(ILOT_UNINSTALL) 在部分 Windows 版本上无法移除该处的旧版本值，
+// 导致卸载后系统设置仍残留「不可用的输入法」。此函数扫描每个语言子键下的值
+// （值名形如 "<langid>:{CLSID}{Profile}"），匹配 WinFire 基 GUID 前缀后删除。
+static void CleanupUserProfileInputMethods() {
+    HKEY hUserProfile = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Control Panel\\International\\User Profile",
+                      0, KEY_READ, &hUserProfile) != ERROR_SUCCESS)
+        return;
+
+    // WinFire CLSID 哨兵前缀（{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B），匹配所有版本
+    const wchar_t kWinFireClsidPrefix[] = L"{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B";
+
+    // 枚举语言子键（如 "zh-Hans-CN", "en-US"）
+    for (int langIdx = 0; ; ++langIdx) {
+        wchar_t langName[64] = {0};
+        DWORD langNameLen = 64;
+        FILETIME ft;
+        if (RegEnumKeyExW(hUserProfile, langIdx, langName, &langNameLen,
+                          nullptr, nullptr, nullptr, &ft) != ERROR_SUCCESS)
+            break;
+
+        HKEY hLang = nullptr;
+        if (RegOpenKeyExW(hUserProfile, langName, 0, KEY_READ | KEY_WRITE, &hLang) != ERROR_SUCCESS)
+            continue;
+
+        // 值名形如 "0804:{8E9F0B21-3C4D-4E5A-9B7C-1F2A3B000001}{A1B2C3D4-...}"
+        // RegEnumValue 文档要求枚举期间不修改键，先收集匹配的值名再删除。
+        std::vector<std::wstring> namesToDelete;
+        for (DWORD valIdx = 0; ; ++valIdx) {
+            wchar_t valName[256] = {0};
+            DWORD valNameLen = 256;
+            DWORD valType = 0;
+            BYTE data[64];
+            DWORD dataLen = sizeof(data);
+            LONG ret = RegEnumValueW(hLang, valIdx, valName, &valNameLen,
+                                     nullptr, &valType, data, &dataLen);
+            if (ret == ERROR_NO_MORE_ITEMS) break;
+            if (ret != ERROR_SUCCESS) break;
+
+            if (wcsstr(valName, kWinFireClsidPrefix) != nullptr) {
+                namesToDelete.push_back(valName);
+            }
+        }
+
+        for (const auto& name : namesToDelete) {
+            RegDeleteValueW(hLang, name.c_str());
+        }
+        RegCloseKey(hLang);
+    }
+    RegCloseKey(hUserProfile);
+}
+
 static bool RegisterServerKey() {
     // HKCR\CLSID\{CLSID}\InprocServer32 = 本 DLL 路径
     wchar_t clsidStr[40];
@@ -243,6 +379,13 @@ static void UnregisterServerKey() {
 STDAPI DllRegisterServer() {
     // 先清理安装目录中可能已不存在的旧版本残留 TSF 注册（防止出现两个输入法）
     CleanupStaleRegistrations();
+    // 清理用户级 SortOrder\AssemblyItem 中所有 WinFire 残留条目（ILOT_UNINSTALL 不可靠）。
+    // 当前版本条目会在下方 InstallLayoutOrTipForUser(0) 重新添加。
+    CleanupSortOrderAssemblyItems();
+    // 清理 HKCU\Control Panel\International\User Profile 中所有 WinFire 残留条目
+    // （Get-WinUserLanguageList 与「替代默认输入法」下拉从此处读，ILOT_UNINSTALL 不可靠）。
+    // 当前版本条目会在下方 InstallLayoutOrTipForUser(0) 重新添加。
+    CleanupUserProfileInputMethods();
 
     if (!RegisterServerKey()) return E_FAIL;
 
@@ -289,6 +432,17 @@ STDAPI DllRegisterServer() {
 }
 
 STDAPI DllUnregisterServer() {
+    // 清理旧版本的残留系统级注册（CleanupStaleRegistrations 跳过当前版本，
+    // 当前版本由下方 RemoveLanguageProfile/Unregister 清理）。
+    CleanupStaleRegistrations();
+    // 清理用户级 SortOrder\AssemblyItem 中所有 WinFire 条目（含当前版本）。
+    // ILOT_UNINSTALL 不可靠，直接扫描注册表删除，防止残留「不可用的输入法」。
+    CleanupSortOrderAssemblyItems();
+    // 清理 HKCU\Control Panel\International\User Profile 中所有 WinFire 条目（含当前版本）。
+    // 该处是 Get-WinUserLanguageList 与「替代默认输入法」下拉的数据源，残留会导致
+    // 「不可用的输入法」持续显示。ILOT_UNINSTALL 不可靠，直接扫描删除。
+    CleanupUserProfileInputMethods();
+
     CComPtr<ITfInputProcessorProfiles> profiles;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_ITfInputProcessorProfiles, (void**)&profiles))) {
