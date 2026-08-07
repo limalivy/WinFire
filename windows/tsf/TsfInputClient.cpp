@@ -57,7 +57,11 @@ void TsfInputClient::SetCompositionText(const std::wstring& text) {
     }
 
     if (pRange) {
-        HRESULT hr = pRange->SetText(session_.editCookie, 0, text.c_str(), (LONG)text.size());
+        // 用 TF_ST_CORRECTION 标记占位文本（如 show_code_in_window 时的占位空格），
+        // 语义为「修正既有内容」而非「新建内容」，抑制开始菜单/Explorer 搜索框等
+        // 自带预测的宿主把它当成新输入而触发输入联想（参考 weasel Composition.cpp）。
+        HRESULT hr = pRange->SetText(session_.editCookie, TF_ST_CORRECTION, text.c_str(),
+                                     (LONG)text.size());
         FIRE_LOG_HR(hr, L"SetText");
         // 重新锚定 range 使其覆盖完整的新文本。
         // 部分 TSF 文本 store（如 Explorer 搜索框）在 SetText 后不会自动
@@ -91,54 +95,39 @@ void TsfInputClient::EndCompositionAndCommit(const std::wstring& text) {
     if (!session_.pContext) return;
     ITfRange* pRange = nullptr;
     if (composition_ && SUCCEEDED(composition_->GetRange(&pRange)) && pRange) {
-        // 关键：先把组字区内容彻底清空，再结束组字，最后用 InsertTextAtSelection
-        // 干净插入最终文本。
+        // 在组字 range 上原地用最终文本覆盖占位空格，然后 EndComposition（不清空文本）。
         //
-        // 背景：show_code_in_window 开启时组字区放了一个占位空格 ' '。此前实现是
-        // 在组字 range 上 SetText(最终文本) 试图覆盖占位空格——但 console 类宿主
-        //（PowerShell 跑在 conhost/WindowsTerminal）的 TSF text store 维护 range
-        // 的方式与 RichEdit/Notepad 不同，SetText 未能可靠覆盖，占位空格残留在
-        // 文档里，上屏变成「我 」。EndComposition 本身只移除组字属性、不清空文本
-        //（见 MSDN），所以必须显式清空。
+        // 背景：曾用「先 SetText("") 清空 → EndComposition → InsertTextAtSelection
+        // 重新插入」的三步法。但开始菜单搜索框（SearchHost.exe）/ Explorer 搜索框等
+        // 自带「内联搜索预测/输入联想」的宿主，会把组字结束之后那次 InsertTextAtSelection
+        // 当作「新用户输入」并据此补全预测——导致上屏后被预测内容吞掉
+        //（如输入「一半」再按空格变成「一半海水一半火焰」），且占位空格未被干净移除
+        // 残留成尾随空格（「一半 」）。
         //
-        // 改为「先 SetText("") 清空 → EndComposition → InsertTextAtSelection 干净
-        // 插入」后，不依赖任何 range 复用语义，对所有宿主都稳健；桌面程序行为等价。
-        HRESULT hrSet = pRange->SetText(session_.editCookie, 0, L"", 0);
-        FIRE_LOG_HR(hrSet, L"EndCompositionAndCommit: SetText(\"\") clear placeholder");
-        HRESULT hrCol = pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
-        FIRE_LOG_HR(hrCol, L"EndCompositionAndCommit: Collapse(START)");
+        // 改为 weasel 验证过的模式：在组字 range 上 SetText(最终文本) 原地替换占位符，
+        // 再 EndComposition（不清空，最终文本原地留在文档），不做组字结束后的 re-insert。
+        // 这样提交对宿主是一次「修正既有内容」而非「新输入」，不触发预测/补全。
+        // console 类宿主在 set_marked_text 已跳过组字，恒走下面的「无组字」分支，不受影响。
+        HRESULT hrSet = pRange->SetText(session_.editCookie, TF_ST_CORRECTION,
+                                        text.c_str(), (LONG)text.size());
+        FIRE_LOG_HR(hrSet, L"EndCompositionAndCommit: SetText(final, in-place)");
+        // 组字 range 在 SetText 后需重新锚定覆盖完整新文本（部分 TSF text store，
+        // 如 Explorer 搜索框，SetText 后不自动扩展 range），再把光标定位到末尾。
+        pRange->Collapse(session_.editCookie, TF_ANCHOR_START);
+        LONG moved = 0;
+        pRange->ShiftEnd(session_.editCookie, (LONG)text.size(), &moved, nullptr);
+        pRange->Collapse(session_.editCookie, TF_ANCHOR_END);
+        TF_SELECTION sel;
+        sel.range = pRange;
+        sel.style.ase = TF_AE_NONE;
+        sel.style.fInterimChar = FALSE;
+        session_.pContext->SetSelection(session_.editCookie, 1, &sel);
         pRange->Release();
         HRESULT hrEnd = composition_->EndComposition(session_.editCookie);
         FIRE_LOG_HR(hrEnd, L"EndCompositionAndCommit: EndComposition");
         composition_->Release();
         composition_ = nullptr;
-        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: composition cleared & ended\n");
-
-        // 结束组字后用 InsertTextAtSelection 干净插入最终文本（不依赖 range 复用）。
-        if (!text.empty()) {
-            ITfInsertAtSelection* pInsert = nullptr;
-            HRESULT hrQI = session_.pContext->QueryInterface(IID_ITfInsertAtSelection,
-                                                             (void**)&pInsert);
-            FIRE_LOG_HR(hrQI, L"EndCompositionAndCommit: QI ITfInsertAtSelection");
-            if (SUCCEEDED(hrQI) && pInsert) {
-                ITfRange* r = nullptr;
-                HRESULT hrIns = pInsert->InsertTextAtSelection(session_.editCookie, 0,
-                                                               text.c_str(),
-                                                               (LONG)text.size(), &r);
-                FIRE_LOG_HR(hrIns, L"EndCompositionAndCommit: InsertTextAtSelection(final)");
-                if (r) {
-                    // 显式定位光标到插入文本末尾（部分控件 EndComposition 后不会自动移光标）
-                    r->Collapse(session_.editCookie, TF_ANCHOR_END);
-                    TF_SELECTION sel;
-                    sel.range = r;
-                    sel.style.ase = TF_AE_NONE;
-                    sel.style.fInterimChar = FALSE;
-                    session_.pContext->SetSelection(session_.editCookie, 1, &sel);
-                    r->Release();
-                }
-                pInsert->Release();
-            }
-        }
+        FIRE_LOG(L"[WinFire] EndCompositionAndCommit: committed in-place & ended\n");
     } else if (!text.empty()) {
         // 无组字：直接在选区插入
         FIRE_LOG(L"[WinFire] EndCompositionAndCommit: NO composition, InsertTextAtSelection\n");
