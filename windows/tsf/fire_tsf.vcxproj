@@ -51,6 +51,24 @@
       </UndefinePreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- Release 配置：开启优化与死代码消除（说明同上）。
+       TSF DLL 作为 in-process COM 组件加载到各宿主进程，优化后体积显著下降可减少映像加载开销。 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <StringPooling>true</StringPooling>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <!-- Windows 层 -->
     <ClCompile Include="Globals.cpp" />

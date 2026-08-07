@@ -40,6 +40,36 @@
       <PreprocessorDefinitions>__cplusplus;_M_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
   </ItemDefinitionGroup>
+  <!-- Release 配置：开启优化与死代码消除。
+       基础 ItemDefinitionGroup 无 Condition（Debug/Release 共用），MSBuild 默认 /Od（禁用优化），
+       导致 Debug/Release 二进制体积几乎相同。本块仅对 Release 追加标准优化项，
+       不覆盖基础块的 RuntimeLibrary/LanguageStandard/AdditionalDependencies 等设置。
+         Optimization=MaxSpeed (/O2)        速度优先优化
+         FavorSizeOrSpeed=Size (/Os)        sqlite 等大块未用代码优先折叠缩小体积
+         OmitFramePointers=true             省栈帧指针
+         WholeProgramOptimization=true      LTCG，跨编译单元内联+死代码消除
+         StringPooling=true                 只读字符串合并
+         FunctionLevelLinking=true (/Gy)    函数级链接，配合链接器 /OPT:REF 消除未引用函数
+         DebugInformationFormat=ProgramDatabase  仍生成 PDB 便于排障，但不内嵌进 EXE
+       链接器：LinkTimeCodeGeneration 启用整程序优化；
+                OptimizeReferences=true (/OPT:REF) 删除未引用 COMDAT；
+                EnableCOMDATFolding=true (/OPT:ICF) 合并等价 COMDAT。 -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <StringPooling>true</StringPooling>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ConfigApp.cpp" />
     <ClCompile Include="InputSettingsPage.cpp" />
