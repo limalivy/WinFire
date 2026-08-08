@@ -117,10 +117,12 @@ foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
     & taskkill /F /IM $exe 2>&1 | Out-Null
 }
 if (Test-Path $InstallDir) {
-    # 先处理可能仍被宿主进程占用的 DLL：删不掉则标记重启后删除，避免整体删除失败。
+    # 先处理可能仍被宿主进程占用的 DLL 与 EXE：删不掉则标记重启后删除，避免整体删除失败。
+    # fire_dictd.exe 是常驻后台进程，即便上方 taskkill 已结束，仍可能因时序被映像锁占用
+    # （TSF DLL 被宿主进程按键触发时会重新拉起 dictd）。与 DLL 同等对待，失败则延迟到重启删除。
     $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
     $mf = Add-Type -MemberDefinition $sig -Name MoveFileExNative -Namespace WinFireUninstall -PassThru
-    Get-ChildItem -Path $InstallDir -Filter "fire_tsf*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem -Path $InstallDir -File -ErrorAction SilentlyContinue | ForEach-Object {
         try {
             Remove-Item $_.FullName -Force -ErrorAction Stop
         } catch {
@@ -130,7 +132,14 @@ if (Test-Path $InstallDir) {
     }
     Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
     if (Test-Path $InstallDir) {
-        Write-Host ("  [PARTIAL] some files in use; remaining will be removed on reboot") -ForegroundColor Yellow
+        # 目录仍在：内部有文件被占用、已标记重启删除，导致 Remove-Item 删不掉整个目录。
+        # 把目录本身（含 tables 子目录）也写入重启删除队列，避免重启后文件已删、目录却留下
+        # 成为空壳残留（重启时文件条目先于目录条目处理，目录届时已空可删）。
+        Get-ChildItem -Path $InstallDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null
+        }
+        $mf::MoveFileEx($InstallDir, $null, 4) | Out-Null
+        Write-Host ("  [PARTIAL] some files in use; all will be removed on reboot") -ForegroundColor Yellow
     } else {
         Write-Host ("  [OK] Removed " + $InstallDir) -ForegroundColor Green
     }
@@ -141,11 +150,38 @@ if (Test-Path $InstallDir) {
 # 4. User data
 Write-Host "[4/4] User data..." -ForegroundColor Yellow
 $ConfigDir = "$env:APPDATA\WinFire"
-if (Test-Path $ConfigDir) {
+$LocalDir = "$env:LOCALAPPDATA\WinFire"
+if ((Test-Path $ConfigDir) -or (Test-Path $LocalDir)) {
     $answer = Read-Host "  Keep user data at $ConfigDir? [Y/n]"
     if ($answer -eq 'n' -or $answer -eq 'N') {
-        Remove-Item -Recurse -Force $ConfigDir
-        Write-Host "  [OK] User data removed" -ForegroundColor Green
+        # 本步独立声明 MoveFileEx 委托（与第 3 步解耦，避免依赖第 3 步是否执行）。
+        $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
+        $mfData = Add-Type -MemberDefinition $sig -Name MoveFileExUserData -Namespace WinFireUninstall -PassThru
+        # 两个目录同等对待：用户选删除时一并清理。$LocalDir 在 Debug 构建下含 fire_tsf 日志
+        # （可达上百 MB），此前不覆盖；与用户数据目录语义一致，选删除一并清，选保留一并留。
+        foreach ($d in @($ConfigDir, $LocalDir)) {
+            if (-not (Test-Path $d)) { continue }
+            Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
+            # Remove-Item 对被占用的文件（dictd 句柄锁住的 sqlite/wal/shm）会静默跳过：
+            # 再扫一遍残留，逐个 MoveFileEx 延迟到重启删除，避免静默失败留下残留。
+            if (Test-Path $d) {
+                Get-ChildItem -Path $d -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                    try {
+                        Remove-Item $_.FullName -Force -ErrorAction Stop
+                    } catch {
+                        $mfData::MoveFileEx($_.FullName, $null, 4) | Out-Null
+                        Write-Host ("  [DEFER] " + $_.Name + " in use, will delete on reboot") -ForegroundColor DarkGray
+                    }
+                }
+                # 文件已删或已标记重启删除后，目录本身仍会留下（Remove-Item 删不掉非空目录）。
+                # 把目录（含 logs 等子目录）也写入重启删除队列，避免重启后留空壳目录残留。
+                Get-ChildItem -Path $d -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                    $mfData::MoveFileEx($_.FullName, $null, 4) | Out-Null
+                }
+                $mfData::MoveFileEx($d, $null, 4) | Out-Null
+            }
+        }
+        Write-Host "  [OK] User data removed (locked files/dirs deferred to reboot)" -ForegroundColor Green
     } else {
         Write-Host ("  [KEEP] " + $ConfigDir) -ForegroundColor Yellow
     }

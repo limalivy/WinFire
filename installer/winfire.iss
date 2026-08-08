@@ -153,6 +153,12 @@ Filename: "{win}\System32\regsvr32.exe"; Parameters: "/s /u ""{app}\{#TsfDllName
 [UninstallDelete]
 ; 清理所有版本化 TSF DLL（含历史升级中因占用而延迟删除失败的残留）
 Type: files;          Name: "{app}\fire_tsf_*.dll"
+; 三个独立 EXE：fire_dictd.exe 是常驻后台进程，卸载时可能仍被映像锁占用
+; （TSF DLL 被宿主进程按键触发时可能重新拉起 dictd，见 NamedPipeClient.cpp）。
+; 列在这里让 Inno 尝试删除；被占用时由 [Code] 的 DeleteOrDeferDll 标记重启删除。
+Type: files;          Name: "{app}\fire_dictd.exe"
+Type: files;          Name: "{app}\fire_config.exe"
+Type: files;          Name: "{app}\tablebuilder.exe"
 Type: filesandordirs; Name: "{app}\tables"
 Type: dirifempty;     Name: "{app}"
 
@@ -194,7 +200,7 @@ StatusRegisteringIME=正在注册输入法...
 StatusGrantingAcl=正在配置沙箱访问权限...
 StatusBuildingDict=正在构建词库，请稍候...
 LaunchConfigTool=启动配置工具(&L)
-UninstallDataPrompt=是否删除用户数据（配置、词库、输入统计）？%n选择「否」将保留 %1 以便将来重装。
+UninstallDataPrompt=是否删除用户数据（配置、词库、输入统计、日志）？%n选择「否」将保留 %1 以便将来重装。
 
 [Code]
 const
@@ -428,6 +434,55 @@ begin
     '}');
 end;
 
+// 删除一个目录树：先整体 DelTree；若仍有残留（如 dictd 句柄锁住的 sqlite/wal/shm，
+// 或被宿主进程占用的文件无法立即删除），对剩余文件逐个 DeleteOrDeferDll，把无法
+// 立即删除者标记为「重启后删除」（MoveFileEx），避免静默失败留下残留。
+// 与 DeleteOrDeferDll 同样：用户无需立即重启，残留文件会在下次重启时由内核删除。
+//
+// 目录本身也一并延迟删除：当内部有文件被占用时，DelTree 无法删掉目录（非空），
+// Inno 的 [UninstallDelete] dirifempty 此时也因目录非空而跳过。重启后文件先被内核
+// 删除，目录变空，但无人再删它 → 留下空目录残留。此处把目录本身也写入 PFR
+// （MoveFileEx 对空目录有效；PFR 中文件条目先于目录条目处理，重启时目录已空）。
+procedure DeleteTreeWithDefer(const dirPath: String);
+var
+  fr: TFindRec;
+  fullPath: String;
+begin
+  if not DirExists(dirPath) then
+    exit;
+  // 先整体删除（覆盖绝大多数文件未被占用的常见情形）。
+  DelTree(dirPath, True, True, True);
+  if not DirExists(dirPath) then
+    exit;
+  // DelTree 对被占用的文件会静默跳过：再扫一遍残留，逐个延迟删除。
+  if FindFirst(dirPath + '\*', fr) then
+  begin
+    try
+      repeat
+        // 跳过目录项本身（FindFirst/FindNext 会返回 . 与 ..）
+        if (fr.Name <> '.') and (fr.Name <> '..') then
+        begin
+          fullPath := dirPath + '\' + fr.Name;
+          // 仅处理文件；子目录（如 logs）由其内部文件删除后变空，再随父目录一并删除。
+          if DirExists(fullPath) then
+            DeleteTreeWithDefer(fullPath)
+          else
+            DeleteOrDeferDll(fullPath);
+        end;
+      until not FindNext(fr);
+    finally
+      FindClose(fr);
+    end;
+  end;
+  // 内部文件已删（或已标记重启删除）：再尝试删空目录；仍失败则把目录本身
+  // 也写入重启删除队列，避免重启后文件已删、目录却留下成为空壳残留。
+  if DirExists(dirPath) then
+  begin
+    if not RemoveDir(dirPath) then
+      MoveFileExW(dirPath, '', MOVEFILE_DELAY_UNTIL_REBOOT);
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   userDataDir, appDir, pattern, foundPath: String;
@@ -449,6 +504,28 @@ begin
         FindClose(fr);
       end;
     end;
+    // 此时 TSF Profile 已被 [UninstallRun] 的 regsvr32 /u 反注册，宿主进程下一次按键
+    // 不再调用本 DLL，也就不会经 LaunchBackend 重新拉起 dictd。在此删除三个独立 EXE：
+    // fire_dictd.exe 是常驻后台，此前由 InitializeUninstall 的 KillUserExes 释放过，
+    // 但为兜底「杀完又被重生」或「未成功结束」的窗口，这里再次尝试删除，占用则延迟
+    // 到重启删除（与 DLL 同等对待，DeleteOrDeferDll 机制对 EXE 通用）。
+    DeleteOrDeferDll(appDir + '\fire_dictd.exe');
+    DeleteOrDeferDll(appDir + '\fire_config.exe');
+    DeleteOrDeferDll(appDir + '\tablebuilder.exe');
+    // {app} 与 {app}\tables 由 [Dirs] uninsneveruninstall 标记，Inno 不会自动删除；
+    // [UninstallDelete] 的 dirifempty 在文件被占用时也跳过。此处主动尝试删除 tables
+    // 子目录与 {app} 本身，删除失败（内部仍有被占用文件）则延迟到重启删除，避免留下
+    // 空目录残留（重启时文件先被删，目录变空后被删，顺序由 PFR 写入顺序保证）。
+    if DirExists(appDir + '\tables') then
+    begin
+      if not RemoveDir(appDir + '\tables') then
+        MoveFileExW(appDir + '\tables', '', MOVEFILE_DELAY_UNTIL_REBOOT);
+    end;
+    if DirExists(appDir) then
+    begin
+      if not RemoveDir(appDir) then
+        MoveFileExW(appDir, '', MOVEFILE_DELAY_UNTIL_REBOOT);
+    end;
     // 兜底清理用户级 SortOrder\AssemblyItem 中的 WinFire 残留条目
     // （DllUnregisterServer 已清理，此处防 DLL 已删时 regsvr32 失败的兜底）。
     CleanSortOrderAssemblyItems();
@@ -459,17 +536,25 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
-    // 注意：此处【不】清理 PFR。被宿主进程占用的 DLL 在 usUninstall 阶段已由
-    // DeleteOrDeferDll 写入 MoveFileEx 重启删除条目，若在此清空会让这些 DLL 永远
-    // 删不掉（{app} 里残留文件 + 重启删除指令被撤）。PFR 条目应留待系统重启时由
-    // 内核删除文件，或下次安装开头由 InitializeSetup 的 CleanWinFirePendingOps 兜底清。
+    // 注意：此处【不】清理 PFR。被宿主进程占用的 DLL/EXE 在 usUninstall 阶段已由
+    // DeleteOrDeferDll 写入 MoveFileEx 重启删除条目，若在此清空会让这些文件永远
+    // 删不掉（{app}/{userappdata} 里残留文件 + 重启删除指令被撤）。PFR 条目应留待系统
+    // 重启时由内核删除文件，或下次安装开头由 InitializeSetup 的 CleanWinFirePendingOps
+    // 兜底清。
     userDataDir := ExpandConstant('{userappdata}\WinFire');
     if DirExists(userDataDir) then
     begin
       if MsgBox(Format(CustomMessage('UninstallDataPrompt'), [userDataDir]),
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       begin
-        DelTree(userDataDir, True, True, True);
+        // 用 DeleteTreeWithDefer 而非 DelTree：被 dictd 句柄锁住的 sqlite/wal/shm
+        // 无法立即删除，逐个 MoveFileEx 延迟到重启删除，避免静默失败留下残留
+        // （此前 DelTree 静默跳过这些文件，导致用户选「删除」后仍残留 sqlite）。
+        DeleteTreeWithDefer(userDataDir);
+        // %LOCALAPPDATA%\WinFire（Debug 构建下 fire_tsf 日志落盘于此，可达上百 MB；
+        // 此前三条卸载路径都不覆盖，是独立覆盖盲区）。与用户数据目录同等对待：
+        // 用户选「删除」时一并清理，选「保留」时一并保留，语义一致。
+        DeleteTreeWithDefer(ExpandConstant('{localappdata}\WinFire'));
       end;
     end;
   end;

@@ -133,7 +133,7 @@ if (Test-Path $userProfileBase) {
 }
 
 # ---- 7. 清理其他残留 ----
-Write-Host "[7/7] Cleaning misc..." -ForegroundColor Yellow
+Write-Host "[7/8] Cleaning misc..." -ForegroundColor Yellow
 
 # HKLM\Software\WinFire
 $winfireReg = "HKLM:\Software\WinFire"
@@ -157,21 +157,24 @@ foreach ($hive in @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
     }
 }
 
-# Program Files 中的 DLL 文件
+# Program Files 中的全部文件（含 fire_dictd.exe / fire_config.exe / tablebuilder.exe 三个
+# 独立 EXE，而非仅 fire_tsf*.dll）。fire_dictd.exe 是常驻后台，即便上方 taskkill 已结束，
+# 仍可能因时序被映像锁占用（TSF DLL 被宿主进程按键触发时会重新拉起 dictd），与 DLL 同等对待。
+$sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
+$mf = Add-Type -MemberDefinition $sig -Name MoveFileExNative -Namespace WinFireCleanup -PassThru
 if (Test-Path $installDir) {
-    Get-ChildItem -Path $installDir -Filter "fire_tsf*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem -Path $installDir -File -ErrorAction SilentlyContinue | ForEach-Object {
         try {
             Remove-Item $_.FullName -Force -ErrorAction Stop
             Write-Host "  Deleted: $($_.Name)"
         } catch {
             # 被占用 → 标记重启删除
-            $sig = '[DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool MoveFileEx(string a, string b, int f);'
-            $mf = Add-Type -MemberDefinition $sig -Name MoveFileExNative -Namespace WinFireCleanup -PassThru
             $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null
             Write-Host "  Defer reboot: $($_.Name)" -ForegroundColor DarkGray
         }
     }
-    # 删除空目录（被 defer 的文件仍占位，目录非空跳过不报错）
+    # 删除空目录（被 defer 的文件仍占位，目录非空则连同子目录一并标记重启删除，
+    # 否则重启后文件已删、目录却留下成为空壳残留）。
     $remaining = Get-ChildItem $installDir -ErrorAction SilentlyContinue
     if (-not $remaining) {
         Remove-Item $installDir -Force -ErrorAction SilentlyContinue
@@ -180,6 +183,45 @@ if (Test-Path $installDir) {
         } else {
             Write-Host "  Removed: $installDir"
         }
+    } else {
+        # 有文件被占用、已标记重启删除：把子目录与 $installDir 本身也写入重启删除队列。
+        Get-ChildItem -Path $installDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null
+        }
+        $mf::MoveFileEx($installDir, $null, 4) | Out-Null
+        Write-Host "  (directory + pending files will be removed on reboot): $installDir" -ForegroundColor DarkGray
+    }
+}
+
+# ---- 8. 用户数据与日志（cleanup_now 是「核选项」，清除一切残留）----
+# %APPDATA%\WinFire：config.json / 词库 sqlite / 统计 sqlite；其中 sqlite 被 dictd 句柄
+#   常开锁住，逐个 MoveFileEx 延迟到重启删除。
+# %LOCALAPPDATA%\WinFire：Debug 构建下 fire_tsf 日志落盘于此（可达上百 MB），
+#   此前所有卸载路径都不覆盖。cleanup_now 语义为清除一切残留，应一并删除。
+Write-Host "[8/8] Cleaning user data & logs..." -ForegroundColor Yellow
+foreach ($d in @("$env:APPDATA\WinFire", "$env:LOCALAPPDATA\WinFire")) {
+    if (-not (Test-Path $d)) { continue }
+    Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
+    # 被占用的 sqlite/wal/shm 无法立即删除：逐个延迟到重启删除。
+    if (Test-Path $d) {
+        Get-ChildItem -Path $d -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                Remove-Item $_.FullName -Force -ErrorAction Stop
+            } catch {
+                $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null
+                Write-Host "  Defer reboot: $($_.Name)" -ForegroundColor DarkGray
+            }
+        }
+        # 目录本身（含 logs 等子目录）也写入重启删除队列，避免重启后留空壳目录残留。
+        Get-ChildItem -Path $d -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            $mf::MoveFileEx($_.FullName, $null, 4) | Out-Null
+        }
+        $mf::MoveFileEx($d, $null, 4) | Out-Null
+    }
+    if (-not (Test-Path $d)) {
+        Write-Host "  Removed: $d"
+    } else {
+        Write-Host "  (kept, files/dirs pending reboot): $d" -ForegroundColor DarkGray
     }
 }
 
@@ -246,9 +288,16 @@ if (Test-Path $userProfileBase) {
         }
     }
 }
+# 检查文件系统残留（仍存在则说明有文件被占用、已标记重启删除）
+foreach ($d in @($installDir, "$env:APPDATA\WinFire", "$env:LOCALAPPDATA\WinFire")) {
+    if (Test-Path $d) {
+        $cnt = (Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+        if ($cnt -gt 0) { $left += "Files: $d ($cnt file(s) pending reboot delete)" }
+    }
+}
 if ($left.Count -eq 0) {
     Write-Host "  All clean!" -ForegroundColor Green
 } else {
-    Write-Host "  Still remaining:" -ForegroundColor Red
-    $left | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    Write-Host "  Still remaining (reboot to finish):" -ForegroundColor Yellow
+    $left | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
 }
