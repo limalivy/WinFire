@@ -209,29 +209,35 @@ $StatsDb      = "$ConfigDir\statistics.sqlite"
 $StagingConf  = "$RepoRoot\installer\staging\config.json"
 $null = New-Item -ItemType Directory -Path $ConfigDir -Force
 
-# config.json
+# config.json：以 installer/staging/config.json 为单一真相源（camelCase + 整数枚举，
+# 与 windows/config/ConfigStore.cpp::LoadFromString 一致）。码表路径用 {APP} 占位符，
+# 此处展开为真实程序安装目录 $InstallDir（与 winfire.iss WriteDefaultConfigIfMissing
+# 行为一致），使词库管理「已选」装完即正确显示。
 if (-not (Test-Path $ConfigFile)) {
+    $config = $null
     if (Test-Path $StagingConf) {
-        Copy-Item $StagingConf $ConfigFile -Force
-        Write-Host "  [OK] config.json (from staging)" -ForegroundColor Green
+        $config = [System.IO.File]::ReadAllText($StagingConf)
     } else {
-        $defaultConfig = @"
+        $config = @"
 {
-  "candidate_count": 5,
-  "code_mode": "wubiPinyin",
-  "punctuation_mode": "zhHans",
-  "enable_word_input": true,
-  "enable_dynamic_frequency": false,
-  "show_code_in_window": true,
-  "wubi_code_tip": true,
-  "z_key_query": true,
-  "enable_statistics": false,
-  "toggle_input_mode_key": "shift"
+  "zKeyQuery": true,
+  "showCodeInWindow": true,
+  "wubiCodeTip": true,
+  "enableWordInput": true,
+  "enableDynamicFrequency": false,
+  "candidateCount": 5,
+  "codeMode": 2,
+  "punctuationMode": 1,
+  "toggleInputModeKey": 0,
+  "enableStatistics": false,
+  "wbTablePath": "{APP}\\tables\\wb_table.txt",
+  "pyTablePath": "{APP}\\tables\\py_table.txt"
 }
 "@
-        [System.IO.File]::WriteAllText($ConfigFile, $defaultConfig, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "  [OK] config.json (defaults)" -ForegroundColor Green
     }
+    $config = $config.Replace('{APP}', $InstallDir)
+    [System.IO.File]::WriteAllText($ConfigFile, $config, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "  [OK] config.json" -ForegroundColor Green
 } else {
     Write-Host "  [SKIP] config.json exists" -ForegroundColor DarkGray
 }

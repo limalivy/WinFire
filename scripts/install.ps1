@@ -120,20 +120,28 @@ $null = New-Item -ItemType Directory -Path $ConfigDir -Force
 
 $ConfigFile = "$ConfigDir\config.json"
 if (-not (Test-Path $ConfigFile)) {
+    # 默认 config.json：camelCase 键 + 整数枚举（与 windows/config/ConfigStore.cpp::LoadFromString
+    # 一致），码表路径用 {APP} 占位符并在此展开为真实程序安装目录（与 winfire.iss
+    # WriteDefaultConfigIfMissing 行为一致），使词库管理「已选」装完即正确显示 wb_table.txt /
+    # py_table.txt。内联 heredoc（自包含，不依赖 staging 产物），须与 build_installer.ps1 /
+    # dev_reload.ps1 保持同步。
     $config = @"
 {
-  "candidate_count": 5,
-  "code_mode": "wubiPinyin",
-  "punctuation_mode": "zhHans",
-  "enable_word_input": true,
-  "enable_dynamic_frequency": false,
-  "show_code_in_window": true,
-  "wubi_code_tip": true,
-  "z_key_query": true,
-  "enable_statistics": false,
-  "toggle_input_mode_key": "shift"
+  "zKeyQuery": true,
+  "showCodeInWindow": true,
+  "wubiCodeTip": true,
+  "enableWordInput": true,
+  "enableDynamicFrequency": false,
+  "candidateCount": 5,
+  "codeMode": 2,
+  "punctuationMode": 1,
+  "toggleInputModeKey": 0,
+  "enableStatistics": false,
+  "wbTablePath": "{APP}\\tables\\wb_table.txt",
+  "pyTablePath": "{APP}\\tables\\py_table.txt"
 }
 "@
+    $config = $config.Replace('{APP}', $InstallDir)
     [System.IO.File]::WriteAllText($ConfigFile, $config, [System.Text.UTF8Encoding]::new($false))
     Write-Host "  [OK]   config.json" -ForegroundColor Green
 } else {

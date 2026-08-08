@@ -100,8 +100,8 @@ Source: "{#BuildDictdDir}\fire_dictd.exe";   DestDir: "{app}"; Flags: ignorevers
 ; 安装时用 tablebuilder.exe + 码表现场生成（仅当用户数据目录下不存在时）。
 ; 这样省去 ~7.78MB 预构建 db（包内 ~3.4MB），且现场构建仅约 1 秒。用户已有词库
 ; （含动态调频）保留不覆盖，语义与原 onlyifdoesntexist 一致。
-; 默认配置（仅首次安装写入，已存在则保留用户自定义）
-Source: "{#StagingDir}\config.json";         DestDir: "{userappdata}\WinFire"; Flags: onlyifdoesntexist
+; 默认 config.json 不在 [Files] 复制：含 {APP} 占位符需运行期展开为真实 {app} 路径，
+; 由 [Code] WriteDefaultConfigIfMissing 内联生成（与 build_installer.ps1 heredoc 同步）。
 ; 码表（供 fire_config.exe 词库管理页导入/重建词库使用）
 Source: "{#ResourcesDir}\wb_table.txt";      DestDir: "{app}\tables"; Flags: ignoreversion
 Source: "{#ResourcesDir}\wb_98_table.txt";   DestDir: "{app}\tables"; Flags: ignoreversion
@@ -132,7 +132,12 @@ Filename: "{win}\System32\regsvr32.exe"; Parameters: "/s ""{app}\{#TsfDllName}""
 
 ; 安装完成后立即拉起后台查字进程（正常 IL），使沙箱进程首次输入即可出候选，
 ; 无需等 DLL 端按需拉起（AppContainer 进程通常无权 CreateProcess）。
-Filename: "{app}\fire_dictd.exe"; Flags: nowait runhidden skipifsilent
+; BeforeInstall 在该 [Run] 条目启动 dictd 之前执行：此时 [Files] 已全部拷贝完毕
+; （Inno 顺序为 [Files] → [Run] → ssPostInstall），tablebuilder.exe 与码表均已就位。
+; 必须在此处而非 ssPostInstall 构建词库——否则 dictd 早于词库启动，一次性 Init 打开
+; sqlite 失败后 db_ 永不复原，Hello.ready 永远 false，全部按键透传（等同英文）。
+Filename: "{app}\fire_dictd.exe"; Flags: nowait runhidden skipifsilent; \
+  BeforeInstall: BuildDictIfMissing
 
 ; 安装完成后启动配置工具（可选，用户可在向导中勾选）
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchConfigTool}"; \
@@ -341,6 +346,47 @@ begin
   RunTableBuilder('--combine-dict "' + dbPath + '"', ResultCode);
 end;
 
+// 生成默认 config.json 到用户数据目录（仅当不存在时——保留用户自定义）。
+// 模板内联于此（camelCase 键 + 整数枚举，与 windows/config/ConfigStore.cpp::LoadFromString
+// 一致；须与 scripts/build_installer.ps1 的 heredoc 保持同步）。码表路径用 {APP} 占位符，
+// 此处展开为真实 {app} 安装路径，使词库管理「已选」落盘即指向 wb_table.txt / py_table.txt。
+// 不用 LoadStringFromFile（其 var 参数是 AnsiString，与 String 变量类型不匹配会编译失败），
+// 改用内联字符串 + SaveStringToFile（与本文件既有写法一致）。
+// 在 ssPostInstall 调用（[Files] 已就位，[Run] 已启动 dictd）。
+procedure WriteDefaultConfigIfMissing();
+var
+  userDataDir, tmpl, appDir, configPath: String;
+begin
+  userDataDir := ExpandConstant('{userappdata}\WinFire');
+  configPath := userDataDir + '\config.json';
+  if FileExists(configPath) then exit;  // 仅首次安装写入，已存在则保留用户自定义
+
+  // 用户数据目录此时可能尚未由 [Dirs] 创建（ssInstall 早于 [Files]），主动建目录。
+  if not DirExists(userDataDir) then
+    CreateDir(userDataDir);
+
+  // {APP} 为自定义占位符（非 Inno 常量，ISPP 不会展开；不能用 {app}，否则编译期被展开）。
+  // Pascal 字符串不转义反斜杠：'\\tables' 即字面双反斜杠，与 staging 模板一致。
+  tmpl :=
+    '{' + #13#10 +
+    '  "zKeyQuery": true,' + #13#10 +
+    '  "showCodeInWindow": true,' + #13#10 +
+    '  "wubiCodeTip": true,' + #13#10 +
+    '  "enableWordInput": true,' + #13#10 +
+    '  "enableDynamicFrequency": false,' + #13#10 +
+    '  "candidateCount": 5,' + #13#10 +
+    '  "codeMode": 2,' + #13#10 +
+    '  "punctuationMode": 1,' + #13#10 +
+    '  "toggleInputModeKey": 0,' + #13#10 +
+    '  "enableStatistics": false,' + #13#10 +
+    '  "wbTablePath": "{APP}\\tables\\wb_table.txt",' + #13#10 +
+    '  "pyTablePath": "{APP}\\tables\\py_table.txt"' + #13#10 +
+    '}';
+  appDir := ExpandConstant('{app}');
+  StringChange(tmpl, '{APP}', appDir);
+  SaveStringToFile(configPath, tmpl, False);
+end;
+
 function InitializeSetup(): Boolean;
 begin
   // 安装前先清理上次卸载残留的 PendingFileRenameOperations 条目，
@@ -357,9 +403,14 @@ begin
   if CurStep = ssPostInstall then
   begin
     CleanupOldTsfDlls();
-    // 现场构建词库（ssPostInstall 时 [Files] 已全部就位，且早于 [Run] 启动 dictd，
-    // 保证 dictd 首次启动时 sqlite 已存在）。仅当用户无已有词库时触发。
-    BuildDictIfMissing();
+    // 生成默认 config.json（仅当用户无已有 config 时，onlyifdoesntexist 语义）。
+    // 内联 camelCase 模板并展开 {APP} 占位符为真实 {app} 路径，使词库管理「已选」
+    // 落盘即正确显示 wb_table.txt / py_table.txt。
+    WriteDefaultConfigIfMissing();
+    // 词库构建（BuildDictIfMissing）已移至 [Run] 中 dictd 启动条目的 BeforeInstall：
+    // Inno 实际顺序为 [Files] → [Run] → ssPostInstall，原放 ssPostInstall 会导致 dictd
+    // 早于词库启动、一次性 Init 打开 sqlite 失败后永不复原（Hello.ready 恒 false）。
+    // 此处不再调用 BuildDictIfMissing。
     // 注意：此处【不】清理 PFR。CleanupOldTsfDlls 中 DeleteOrDeferDll 对仍被占用的
     // 旧版本 DLL 写入了 MoveFileEx 重启删除条目，立即清空会让旧 DLL 永远删不掉
     // （文件留在 {app}，重启删除指令被撤）。PFR 条目留待系统重启删除，或下次安装
