@@ -305,6 +305,7 @@ SIZE CandidateWindowController::Measure() {
     float candPadL = ap.candidate_padding_left * dpi;
     float candPadR = ap.candidate_padding_right * dpi;
     float candPadB = ap.candidate_padding_bottom * dpi;
+    float radius = ap.window_border_radius * dpi;  // 圆角半径，兼作翻页按钮到边界的最小安全间距
 
     // 组字区（缓存区）行
     SizeF originSz = measure(U8ToU16(view_.original_string), textFont);
@@ -379,6 +380,8 @@ SIZE CandidateWindowController::Measure() {
     // 业火规则：横向竖排两箭头放候选列表右侧、与候选行垂直居中（不含原码行）；
     // 竖向横排放候选列表下方。大小 = fontSize*0.5。
     bool showIndicator = view_.list.size() > 1 || view_.has_prev || view_.has_next;
+    float indicatorRightEdge = -1.0f;   // 横向显示时翻页按钮右边界，用于补足右侧安全间距
+    float indicatorBottomEdge = -1.0f;  // 竖向显示时翻页按钮下边界，用于补足下方安全间距
     if (showIndicator) {
         float indSize = ap.font_size * 0.5f * dpi;
         float indGap = 2.0f * dpi;  // 两箭头之间留 2px
@@ -394,15 +397,18 @@ SIZE CandidateWindowController::Measure() {
                              (LONG)(ix + indSize), (LONG)(iy + 2 * indSize + indGap)};
             rowW = (std::max)(rowW, ix + indSize);
             totalH = (std::max)(totalH, iy + indTotal);
+            indicatorRightEdge = ix + indSize;
         } else {
             // 横排，放在候选列表下方
-            float ix = padL;
+            // 左侧用 max(padL, radius) 保证默认主题（padL=0）下翻页按钮不紧贴左边缘/圆角裁剪区
+            float ix = (std::max)(padL, radius);
             float iy = totalH + candSpace;
             pageUpRect_ = {(LONG)ix, (LONG)iy, (LONG)(ix + indSize), (LONG)(iy + indSize)};
             pageDownRect_ = {(LONG)(ix + indSize + indGap), (LONG)iy,
                              (LONG)(ix + 2 * indSize + indGap), (LONG)(iy + indSize)};
-            rowW = (std::max)(rowW, padL + 2 * indSize + indGap);
+            rowW = (std::max)(rowW, ix + 2 * indSize + indGap);
             totalH = iy + indSize;
+            indicatorBottomEdge = iy + indSize;
         }
     } else {
         pageUpRect_ = {0, 0, 0, 0};
@@ -411,7 +417,21 @@ SIZE CandidateWindowController::Measure() {
 
     maxW = (std::max)(maxW, rowW - padL);
     sz.cx = (LONG)(maxW + padL + padR);
+    // 横向显示翻页按钮时，右侧补足到与圆角半径协调的安全间距，
+    // 避免默认主题（padR=0）下翻页按钮紧贴窗口右边界（取 padR 与 radius 较大值）。
+    if (indicatorRightEdge > 0) {
+        float indRightPad = (std::max)(padR, radius);
+        float need = indicatorRightEdge + indRightPad;
+        if ((float)sz.cx < need) sz.cx = (LONG)need;
+    }
     sz.cy = (LONG)(totalH + padB);
+    // 竖向显示翻页按钮时，下方补足到与圆角半径协调的安全间距，
+    // 避免默认主题（padB=0）下翻页按钮画进底部圆角裁剪区（取 padB 与 radius 较大值）。
+    if (indicatorBottomEdge > 0) {
+        float indBotPad = (std::max)(padB, radius);
+        float need = indicatorBottomEdge + indBotPad;
+        if ((float)sz.cy < need) sz.cy = (LONG)need;
+    }
     ReleaseDC(hwnd_, hdc);
     if (sz.cx < 40) sz.cx = 40;
     if (sz.cy < 24) sz.cy = 24;

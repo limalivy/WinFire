@@ -176,6 +176,13 @@ void CThemePage::ImportTheme() {
             L"导入失败：不是有效的业火主题文件（缺少 id/name/author 或格式错误）。");
         return;
     }
+    // 禁止导入与默认主题同名的主题：删除保护以 id=="default" 判定，
+    // 若导入主题占用该 id（或同名“默认”），会变成无法删除的幽灵主题。
+    if (t.id == "default" || t.name == "\u9ed8\u8ba4") {
+        firecfg::SetText(hwnd, IDC_STATIC_THEME_STATUS,
+            L"导入失败：主题名称或标识与默认主题冲突，请修改后再导入。");
+        return;
+    }
     // 复制到 themes 目录，文件名用业火导出约定 <name>-<id>-<author>.json
     firecfg::EnsureThemesDir();
     std::wstring fn = firecfg::Utf8ToWide(t.name) + L"-" +
@@ -200,6 +207,11 @@ void CThemePage::ExportTheme() {
     // 导出当前活动主题
     if (g_config.theme.id.empty()) {
         firecfg::SetText(hwnd, IDC_STATIC_THEME_STATUS, L"当前无活动主题可导出。");
+        return;
+    }
+    // 默认主题不可导出：避免导出的文件被重新导入后与默认主题同名，导致无法删除。
+    if (g_config.theme.id == "default") {
+        firecfg::SetText(hwnd, IDC_STATIC_THEME_STATUS, L"默认主题不可导出。");
         return;
     }
     std::wstring defaultFn = firecfg::Utf8ToWide(g_config.theme.name) + L"-" +
