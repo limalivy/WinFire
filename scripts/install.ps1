@@ -84,7 +84,12 @@ $null = New-Item -ItemType Directory -Path $InstallDir -Force
 # 使新版 EXE 立即覆盖（与 winfire.iss 的 KillUserExes 对称）。fire_tsf.dll 被宿主进程
 # 加载，不在此杀宿主，其映像锁由版本化文件名 + 侧载 + 延迟删除处理。
 foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
-    & taskkill /F /IM $exe 2>&1 | Out-Null
+    # 进程不存在时 taskkill 写 stderr，在 $ErrorActionPreference="Stop" 下会被拔高为终止性
+    # 错误（NativeCommandError），2>&1|Out-Null 无法吞掉。先探测进程，仅在运行时才 taskkill。
+    $procName = $exe -replace '\.exe$',''
+    if (Get-Process -Name $procName -ErrorAction SilentlyContinue) {
+        & taskkill /F /IM $exe 2>&1 | Out-Null
+    }
 }
 
 # 反注册并清理旧版本 DLL（若存在），随后写入版本化文件名的新 DLL。

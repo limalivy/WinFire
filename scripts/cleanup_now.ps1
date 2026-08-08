@@ -145,7 +145,12 @@ if (Test-Path $winfireReg) {
 # 结束 WinFire 的独立 EXE（dictd 后台 + config/tablebuilder 工具），释放映像占用以便
 # 删除程序文件（与 winfire.iss 的 KillUserExes 对称）。
 foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
-    & taskkill /F /IM $exe 2>&1 | Out-Null
+    # 进程不存在时 taskkill 写 stderr，在 $ErrorActionPreference="Stop" 下会被拔高为终止性
+    # 错误（NativeCommandError），2>&1|Out-Null 无法吞掉。先探测进程，仅在运行时才 taskkill。
+    $procName = $exe -replace '\.exe$',''
+    if (Get-Process -Name $procName -ErrorAction SilentlyContinue) {
+        & taskkill /F /IM $exe 2>&1 | Out-Null
+    }
 }
 
 # 清理 dictd 自启动项（install.ps1 写 HKLM\Run；Inno 安装包写 HKCU\Run；两处都清保证干净）。

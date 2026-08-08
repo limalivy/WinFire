@@ -114,7 +114,12 @@ Write-Host "[3/4] Removing program files..." -ForegroundColor Yellow
 # 删除 {app} 目录（与 winfire.iss 的 KillUserExes 对称）。fire_tsf.dll 的映像锁由
 # 下面的 MoveFileEx 延迟删除处理，不杀宿主进程。
 foreach ($exe in @("fire_dictd.exe","fire_config.exe","tablebuilder.exe")) {
-    & taskkill /F /IM $exe 2>&1 | Out-Null
+    # 进程不存在时 taskkill 写 stderr，在 $ErrorActionPreference="Stop" 下会被拔高为终止性
+    # 错误（NativeCommandError），2>&1|Out-Null 无法吞掉。先探测进程，仅在运行时才 taskkill。
+    $procName = $exe -replace '\.exe$',''
+    if (Get-Process -Name $procName -ErrorAction SilentlyContinue) {
+        & taskkill /F /IM $exe 2>&1 | Out-Null
+    }
 }
 if (Test-Path $InstallDir) {
     # 先处理可能仍被宿主进程占用的 DLL 与 EXE：删不掉则标记重启后删除，避免整体删除失败。
