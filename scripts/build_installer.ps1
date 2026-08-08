@@ -148,103 +148,12 @@ Remove-Item $verifyDb -Force -ErrorAction SilentlyContinue
 # 4. 生成默认 config.json 到 staging
 # ============================================================================
 Write-Step "[4/5] Generating default config.json"
-# installer/staging/ 被 gitignore，config.json 是构建期产物（唯一真相源即此 heredoc）。
-# camelCase 键 + 整数枚举（与 windows/config/ConfigStore.cpp::LoadFromString 一致），
-# 码表路径用 {APP} 占位符，由 winfire.iss WriteDefaultConfigIfMissing / install.ps1 /
-# dev_reload.ps1 在安装期展开为真实程序目录。此 heredoc 必须与各安装脚本保持同步。
+# 默认 config.json 唯一真相源：resources/config.default.json（camelCase 键 + 整数枚举，
+# 与 windows/config/ConfigStore.cpp::LoadFromString 一致）。码表路径用 {APP} 占位符，
+# 由 winfire.iss WriteDefaultConfigIfMissing / install.ps1 / dev_reload.ps1 在安装期
+# 展开为真实程序目录。installer/staging/ 被 gitignore，此处直接拷贝模板到 staging。
 $configPath = Join-Path $StagingDir "config.json"
-$config = @"
-{
-  "zKeyQuery": true,
-  "showCodeInWindow": true,
-  "wubiCodeTip": true,
-  "enableWordInput": true,
-  "enableDynamicFrequency": false,
-  "candidateCount": 5,
-  "codeMode": 2,
-  "punctuationMode": 1,
-  "toggleInputModeKey": 0,
-  "enableStatistics": false,
-  "wbTablePath": "{APP}\\tables\\wb_table.txt",
-  "pyTablePath": "{APP}\\tables\\py_table.txt",
-  "theme": {
-    "schemaVersion": 2,
-    "id": "default",
-    "name": "默认",
-    "author": "微火输入法",
-    "darkModePreference": 0,
-    "light": {
-      "windowBackgroundColor": "#FFFFFF",
-      "windowPaddingTop": 0,
-      "windowPaddingBottom": 0,
-      "windowPaddingLeft": 0,
-      "windowPaddingRight": 0,
-      "windowBorderRadius": 6,
-      "enableLiquidGlass": true,
-      "originCodeColor": "#4D4D4D",
-      "originCandidatesSpace": 0,
-      "originPaddingTop": 0,
-      "originPaddingLeft": 0,
-      "originPaddingRight": 0,
-      "originPaddingBottom": 0,
-      "candidateSpace": 0,
-      "candidateIndexColor": "#1A1A1A",
-      "candidateTextColor": "#1A1A1A",
-      "candidateCodeColor": "#4D4D4DCC",
-      "candidateRadius": 0,
-      "candidatePaddingTop": 2,
-      "candidatePaddingLeft": 2,
-      "candidatePaddingRight": 2,
-      "candidatePaddingBottom": 2,
-      "selectedIndexColor": "#DC143C",
-      "selectedTextColor": "#DC143C",
-      "selectedCodeColor": "#DC143CCC",
-      "selectedBackgroundColor": "#0000000F",
-      "pageIndicatorColor": "#DC143C",
-      "pageIndicatorDisabledColor": "#DC143C66",
-      "fontName": "system",
-      "fontSize": 20,
-      "indexFontSize": 20,
-      "codeFontSize": 20
-    },
-    "dark": {
-      "windowBackgroundColor": "#000000",
-      "windowPaddingTop": 0,
-      "windowPaddingBottom": 0,
-      "windowPaddingLeft": 0,
-      "windowPaddingRight": 0,
-      "windowBorderRadius": 6,
-      "enableLiquidGlass": true,
-      "originCodeColor": "#FFFFFF",
-      "originCandidatesSpace": 0,
-      "originPaddingTop": 0,
-      "originPaddingLeft": 0,
-      "originPaddingRight": 0,
-      "originPaddingBottom": 0,
-      "candidateSpace": 0,
-      "candidateIndexColor": "#E6E6E6",
-      "candidateTextColor": "#E6E6E6",
-      "candidateCodeColor": "#B3B3B3CC",
-      "candidateRadius": 0,
-      "candidatePaddingTop": 2,
-      "candidatePaddingLeft": 2,
-      "candidatePaddingRight": 2,
-      "candidatePaddingBottom": 2,
-      "selectedIndexColor": "#DC143C",
-      "selectedTextColor": "#DC143C",
-      "selectedCodeColor": "#DC143CCC",
-      "selectedBackgroundColor": "#FFFFFF14",
-      "pageIndicatorColor": "#DC143C",
-      "pageIndicatorDisabledColor": "#DC143C66",
-      "fontName": "system",
-      "fontSize": 20,
-      "indexFontSize": 20,
-      "codeFontSize": 20
-    }
-  }
-}
-"@
-[System.IO.File]::WriteAllText($configPath, $config, [System.Text.UTF8Encoding]::new($false))
+Copy-Item "$RepoRoot\resources\config.default.json" $configPath -Force
 Write-Host "  [OK] $configPath" -ForegroundColor Green
 
 # ============================================================================

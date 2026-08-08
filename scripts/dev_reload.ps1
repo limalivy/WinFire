@@ -209,106 +209,17 @@ $StatsDb      = "$ConfigDir\statistics.sqlite"
 $StagingConf  = "$RepoRoot\installer\staging\config.json"
 $null = New-Item -ItemType Directory -Path $ConfigDir -Force
 
-# config.json：以 installer/staging/config.json 为单一真相源（camelCase + 整数枚举，
-# 与 windows/config/ConfigStore.cpp::LoadFromString 一致）。码表路径用 {APP} 占位符，
-# 此处展开为真实程序安装目录 $InstallDir（与 winfire.iss WriteDefaultConfigIfMissing
+# config.json：默认模板唯一真相源为 resources/config.default.json（camelCase + 整数枚举，
+# 与 windows/config/ConfigStore.cpp::LoadFromString 一致）。优先用 build_installer.ps1
+# 生成的 installer/staging/config.json（与之一致），缺失则直接读模板。码表路径用 {APP}
+# 占位符，此处展开为真实程序安装目录 $InstallDir（与 winfire.iss WriteDefaultConfigIfMissing
 # 行为一致），使词库管理「已选」装完即正确显示。
 if (-not (Test-Path $ConfigFile)) {
-    $config = $null
     if (Test-Path $StagingConf) {
         $config = [System.IO.File]::ReadAllText($StagingConf)
     } else {
-        $config = @"
-{
-  "zKeyQuery": true,
-  "showCodeInWindow": true,
-  "wubiCodeTip": true,
-  "enableWordInput": true,
-  "enableDynamicFrequency": false,
-  "candidateCount": 5,
-  "codeMode": 2,
-  "punctuationMode": 1,
-  "toggleInputModeKey": 0,
-  "enableStatistics": false,
-  "wbTablePath": "{APP}\\tables\\wb_table.txt",
-  "pyTablePath": "{APP}\\tables\\py_table.txt",
-  "theme": {
-    "schemaVersion": 2,
-    "id": "default",
-    "name": "默认",
-    "author": "微火输入法",
-    "darkModePreference": 0,
-    "light": {
-      "windowBackgroundColor": "#FFFFFF",
-      "windowPaddingTop": 0,
-      "windowPaddingBottom": 0,
-      "windowPaddingLeft": 0,
-      "windowPaddingRight": 0,
-      "windowBorderRadius": 6,
-      "enableLiquidGlass": true,
-      "originCodeColor": "#4D4D4D",
-      "originCandidatesSpace": 0,
-      "originPaddingTop": 0,
-      "originPaddingLeft": 0,
-      "originPaddingRight": 0,
-      "originPaddingBottom": 0,
-      "candidateSpace": 0,
-      "candidateIndexColor": "#1A1A1A",
-      "candidateTextColor": "#1A1A1A",
-      "candidateCodeColor": "#4D4D4DCC",
-      "candidateRadius": 0,
-      "candidatePaddingTop": 2,
-      "candidatePaddingLeft": 2,
-      "candidatePaddingRight": 2,
-      "candidatePaddingBottom": 2,
-      "selectedIndexColor": "#DC143C",
-      "selectedTextColor": "#DC143C",
-      "selectedCodeColor": "#DC143CCC",
-      "selectedBackgroundColor": "#0000000F",
-      "pageIndicatorColor": "#DC143C",
-      "pageIndicatorDisabledColor": "#DC143C66",
-      "fontName": "system",
-      "fontSize": 20,
-      "indexFontSize": 20,
-      "codeFontSize": 20
-    },
-    "dark": {
-      "windowBackgroundColor": "#000000",
-      "windowPaddingTop": 0,
-      "windowPaddingBottom": 0,
-      "windowPaddingLeft": 0,
-      "windowPaddingRight": 0,
-      "windowBorderRadius": 6,
-      "enableLiquidGlass": true,
-      "originCodeColor": "#FFFFFF",
-      "originCandidatesSpace": 0,
-      "originPaddingTop": 0,
-      "originPaddingLeft": 0,
-      "originPaddingRight": 0,
-      "originPaddingBottom": 0,
-      "candidateSpace": 0,
-      "candidateIndexColor": "#E6E6E6",
-      "candidateTextColor": "#E6E6E6",
-      "candidateCodeColor": "#B3B3B3CC",
-      "candidateRadius": 0,
-      "candidatePaddingTop": 2,
-      "candidatePaddingLeft": 2,
-      "candidatePaddingRight": 2,
-      "candidatePaddingBottom": 2,
-      "selectedIndexColor": "#DC143C",
-      "selectedTextColor": "#DC143C",
-      "selectedCodeColor": "#DC143CCC",
-      "selectedBackgroundColor": "#FFFFFF14",
-      "pageIndicatorColor": "#DC143C",
-      "pageIndicatorDisabledColor": "#DC143C66",
-      "fontName": "system",
-      "fontSize": 20,
-      "indexFontSize": 20,
-      "codeFontSize": 20
-    }
-  }
-}
-"@
+        $config = [System.IO.File]::ReadAllText("$RepoRoot\resources\config.default.json",
+                                                [System.Text.UTF8Encoding]::new($false))
     }
     $config = $config.Replace('{APP}', $InstallDir)
     [System.IO.File]::WriteAllText($ConfigFile, $config, [System.Text.UTF8Encoding]::new($false))

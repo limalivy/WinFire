@@ -100,8 +100,12 @@ Source: "{#BuildDictdDir}\fire_dictd.exe";   DestDir: "{app}"; Flags: ignorevers
 ; 安装时用 tablebuilder.exe + 码表现场生成（仅当用户数据目录下不存在时）。
 ; 这样省去 ~7.78MB 预构建 db（包内 ~3.4MB），且现场构建仅约 1 秒。用户已有词库
 ; （含动态调频）保留不覆盖，语义与原 onlyifdoesntexist 一致。
-; 默认 config.json 不在 [Files] 复制：含 {APP} 占位符需运行期展开为真实 {app} 路径，
-; 由 [Code] WriteDefaultConfigIfMissing 内联生成（与 build_installer.ps1 heredoc 同步）。
+; 默认 config.json 模板：释放到 {tmp}（deleteafterinstall 安装后自动清理），
+; 由 [Code] WriteDefaultConfigIfMissing 读取后展开 {APP} 占位符写到用户数据目录。
+; 模板唯一真相源为 resources/config.default.json，与 build_installer.ps1 /
+; install.ps1 / dev_reload.ps1 共用同一文件。
+Source: "{#ResourcesDir}\config.default.json"; DestDir: "{tmp}"; \
+  DestName: "_wf_config_template.json"; Flags: ignoreversion deleteafterinstall
 ; 码表（供 fire_config.exe 词库管理页导入/重建词库使用）
 Source: "{#ResourcesDir}\wb_table.txt";      DestDir: "{app}\tables"; Flags: ignoreversion
 Source: "{#ResourcesDir}\wb_98_table.txt";   DestDir: "{app}\tables"; Flags: ignoreversion
@@ -347,15 +351,16 @@ begin
 end;
 
 // 生成默认 config.json 到用户数据目录（仅当不存在时——保留用户自定义）。
-// 模板内联于此（camelCase 键 + 整数枚举，与 windows/config/ConfigStore.cpp::LoadFromString
-// 一致；须与 scripts/build_installer.ps1 的 heredoc 保持同步）。码表路径用 {APP} 占位符，
-// 此处展开为真实 {app} 安装路径，使词库管理「已选」落盘即指向 wb_table.txt / py_table.txt。
-// 不用 LoadStringFromFile（其 var 参数是 AnsiString，与 String 变量类型不匹配会编译失败），
-// 改用内联字符串 + SaveStringToFile（与本文件既有写法一致）。
-// 在 ssPostInstall 调用（[Files] 已就位，[Run] 已启动 dictd）。
+// 模板唯一真相源为 resources/config.default.json，由 [Files] 释放到 {tmp}。
+// 用 LoadStringsFromFile 读取（自动识别 UTF-8，返回 Unicode 字符串数组，
+// 绕过 LoadStringFromFile 的 AnsiString 类型陷阱），按行以 CRLF 拼回完整文本，
+// 再 StringChange 展开 {APP} 占位符为真实 {app} 安装路径，使词库管理「已选」
+// 落盘即指向 wb_table.txt / py_table.txt。在 ssPostInstall 调用（[Files] 已就位）。
 procedure WriteDefaultConfigIfMissing();
 var
-  userDataDir, tmpl, appDir, configPath: String;
+  userDataDir, tmplPath, tmpl, appDir, configPath: String;
+  lines: TArrayOfString;
+  i: Integer;
 begin
   userDataDir := ExpandConstant('{userappdata}\WinFire');
   configPath := userDataDir + '\config.json';
@@ -366,97 +371,13 @@ begin
     CreateDir(userDataDir);
 
   // {APP} 为自定义占位符（非 Inno 常量，ISPP 不会展开；不能用 {app}，否则编译期被展开）。
-  // Pascal 字符串不转义反斜杠：'\\tables' 即字面双反斜杠，与 staging 模板一致。
-  tmpl :=
-    '{' + #13#10 +
-    '  "zKeyQuery": true,' + #13#10 +
-    '  "showCodeInWindow": true,' + #13#10 +
-    '  "wubiCodeTip": true,' + #13#10 +
-    '  "enableWordInput": true,' + #13#10 +
-    '  "enableDynamicFrequency": false,' + #13#10 +
-    '  "candidateCount": 5,' + #13#10 +
-    '  "codeMode": 2,' + #13#10 +
-    '  "punctuationMode": 1,' + #13#10 +
-    '  "toggleInputModeKey": 0,' + #13#10 +
-    '  "enableStatistics": false,' + #13#10 +
-    '  "wbTablePath": "{APP}\\tables\\wb_table.txt",' + #13#10 +
-    '  "pyTablePath": "{APP}\\tables\\py_table.txt",' + #13#10 +
-    '  "theme": {' + #13#10 +
-    '    "schemaVersion": 2,' + #13#10 +
-    '    "id": "default",' + #13#10 +
-    '    "name": "默认",' + #13#10 +
-    '    "author": "微火输入法",' + #13#10 +
-    '    "darkModePreference": 0,' + #13#10 +
-    '    "light": {' + #13#10 +
-    '      "windowBackgroundColor": "#FFFFFF",' + #13#10 +
-    '      "windowPaddingTop": 0,' + #13#10 +
-    '      "windowPaddingBottom": 0,' + #13#10 +
-    '      "windowPaddingLeft": 0,' + #13#10 +
-    '      "windowPaddingRight": 0,' + #13#10 +
-    '      "windowBorderRadius": 6,' + #13#10 +
-    '      "enableLiquidGlass": true,' + #13#10 +
-    '      "originCodeColor": "#4D4D4D",' + #13#10 +
-    '      "originCandidatesSpace": 0,' + #13#10 +
-    '      "originPaddingTop": 0,' + #13#10 +
-    '      "originPaddingLeft": 0,' + #13#10 +
-    '      "originPaddingRight": 0,' + #13#10 +
-    '      "originPaddingBottom": 0,' + #13#10 +
-    '      "candidateSpace": 0,' + #13#10 +
-    '      "candidateIndexColor": "#1A1A1A",' + #13#10 +
-    '      "candidateTextColor": "#1A1A1A",' + #13#10 +
-    '      "candidateCodeColor": "#4D4D4DCC",' + #13#10 +
-    '      "candidateRadius": 0,' + #13#10 +
-    '      "candidatePaddingTop": 2,' + #13#10 +
-    '      "candidatePaddingLeft": 2,' + #13#10 +
-    '      "candidatePaddingRight": 2,' + #13#10 +
-    '      "candidatePaddingBottom": 2,' + #13#10 +
-    '      "selectedIndexColor": "#DC143C",' + #13#10 +
-    '      "selectedTextColor": "#DC143C",' + #13#10 +
-    '      "selectedCodeColor": "#DC143CCC",' + #13#10 +
-    '      "selectedBackgroundColor": "#0000000F",' + #13#10 +
-    '      "pageIndicatorColor": "#DC143C",' + #13#10 +
-    '      "pageIndicatorDisabledColor": "#DC143C66",' + #13#10 +
-    '      "fontName": "system",' + #13#10 +
-    '      "fontSize": 20,' + #13#10 +
-    '      "indexFontSize": 20,' + #13#10 +
-    '      "codeFontSize": 20' + #13#10 +
-    '    },' + #13#10 +
-    '    "dark": {' + #13#10 +
-    '      "windowBackgroundColor": "#000000",' + #13#10 +
-    '      "windowPaddingTop": 0,' + #13#10 +
-    '      "windowPaddingBottom": 0,' + #13#10 +
-    '      "windowPaddingLeft": 0,' + #13#10 +
-    '      "windowPaddingRight": 0,' + #13#10 +
-    '      "windowBorderRadius": 6,' + #13#10 +
-    '      "enableLiquidGlass": true,' + #13#10 +
-    '      "originCodeColor": "#FFFFFF",' + #13#10 +
-    '      "originCandidatesSpace": 0,' + #13#10 +
-    '      "originPaddingTop": 0,' + #13#10 +
-    '      "originPaddingLeft": 0,' + #13#10 +
-    '      "originPaddingRight": 0,' + #13#10 +
-    '      "originPaddingBottom": 0,' + #13#10 +
-    '      "candidateSpace": 0,' + #13#10 +
-    '      "candidateIndexColor": "#E6E6E6",' + #13#10 +
-    '      "candidateTextColor": "#E6E6E6",' + #13#10 +
-    '      "candidateCodeColor": "#B3B3B3CC",' + #13#10 +
-    '      "candidateRadius": 0,' + #13#10 +
-    '      "candidatePaddingTop": 2,' + #13#10 +
-    '      "candidatePaddingLeft": 2,' + #13#10 +
-    '      "candidatePaddingRight": 2,' + #13#10 +
-    '      "candidatePaddingBottom": 2,' + #13#10 +
-    '      "selectedIndexColor": "#DC143C",' + #13#10 +
-    '      "selectedTextColor": "#DC143C",' + #13#10 +
-    '      "selectedCodeColor": "#DC143CCC",' + #13#10 +
-    '      "selectedBackgroundColor": "#FFFFFF14",' + #13#10 +
-    '      "pageIndicatorColor": "#DC143C",' + #13#10 +
-    '      "pageIndicatorDisabledColor": "#DC143C66",' + #13#10 +
-    '      "fontName": "system",' + #13#10 +
-    '      "fontSize": 20,' + #13#10 +
-    '      "indexFontSize": 20,' + #13#10 +
-    '      "codeFontSize": 20' + #13#10 +
-    '    }' + #13#10 +
-    '  }' + #13#10 +
-    '}';
+  tmplPath := ExpandConstant('{tmp}\_wf_config_template.json');
+  if not LoadStringsFromFile(tmplPath, lines) then exit;  // 模板读取失败则放弃
+  tmpl := '';
+  for i := 0 to GetArrayLength(lines) - 1 do begin
+    if i > 0 then tmpl := tmpl + #13#10;
+    tmpl := tmpl + lines[i];
+  end;
   appDir := ExpandConstant('{app}');
   StringChange(tmpl, '{APP}', appDir);
   SaveStringToFile(configPath, tmpl, False);
