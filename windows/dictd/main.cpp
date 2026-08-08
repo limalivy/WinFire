@@ -84,7 +84,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     // 同步 Init 会让管道创建延后，导致首个客户端 EnsureConnected 1s 重试窗口超时。
     // 改为后台 Init，主线程立即创建管道 accept；HandleRequest 中 if(dict_) 保护
     // 未就绪时返回空结果，客户端 available_=true 不降级，几秒后词库就绪即可出候选。
-    std::thread initThread([&server]() { server.Init(); });
+    // detach 与下方 ServeConnection 线程一致：accept 循环是 for(;;)+INFINITE 常驻，
+    // server 生命周期与进程相同，后台线程对 server 的访问安全。
+    std::thread([&server]() { server.Init(); }).detach();
 
     firewin::NamedPipeServer pipeServer;
     const std::wstring pipeName = firewin::MakeDictPipeName();
@@ -114,9 +116,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         // 创建管道失败等异常：短暂退避后重试，避免忙循环。
         Sleep(1000);
     }
-
-    // 退出前确保 Init 线程不再访问 server（避免析构 UAF）。
-    initThread.join();
 
     if (mutex) {
         ReleaseMutex(mutex);
