@@ -16,8 +16,23 @@ std::wstring GetConfigDir();
 std::wstring GetConfigJsonPath();
 std::wstring GetUserDictPath();
 std::wstring GetDictDbPath();
+// 主题库目录：<configDir>\themes（不存在不创建；调用方用 EnsureThemesDir 创建）。
+// 与 config.json 同源目录，保证 dictd 与 config.exe 解析到同一主题内联内容。
+std::wstring GetThemesDir();
+void EnsureThemesDir();
 // 返回程序同目录下的 tables 子目录（码表存放位置，不创建）
 std::wstring GetTablesDir();
+
+// 读写独立主题文件（业火格式：schemaVersion/id/name/author/light/dark）。
+// 解析/序列化复用 ConfigStore 内部的主题编解码，写成不含其它 config 字段的纯主题 JSON。
+// 供主题标签页导入/导出/列出主题库使用。
+bool LoadThemeFile(const std::wstring& path, fire::ThemeConfig& out);
+bool SaveThemeFile(const std::wstring& path, const fire::ThemeConfig& theme);
+// 把主题 JSON 文本解析填入 out（不读盘）。校验 id/name/author 非空；失败返回 false。
+// 兼容业火 v1（无 schemaVersion 或 =1）与 v2 主题文件。
+bool ParseThemeJson(const std::string& json, fire::ThemeConfig& out);
+// 把主题序列化为业火格式独立 JSON 文本（不含 config.json 其它字段）。
+std::string SerializeTheme(const fire::ThemeConfig& theme);
 
 class ConfigStore {
 public:

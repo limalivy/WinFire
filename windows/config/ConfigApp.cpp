@@ -9,6 +9,7 @@
 #include "AppModePage.h"
 #include "StatisticsPage.h"
 #include "DictPage.h"
+#include "ThemePage.h"
 #include "ConfigStore.h"
 #include "ConfigIpcClient.h"
 
@@ -85,13 +86,15 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     CAppModePage pageAppMode;
     CStatisticsPage pageStats;
     CDictPage pageDict;
+    CThemePage pageTheme;
 
-    HPROPSHEETPAGE pages[5] = {0};
+    HPROPSHEETPAGE pages[6] = {0};
     pages[0] = CreateInputSettingsPage(pageInput);
     pages[1] = CreatePunctuationPage(pagePunct);
     pages[2] = CreateAppModePage(pageAppMode);
     pages[3] = CreateStatisticsPage(pageStats);
     pages[4] = CreateDictPage(pageDict);
+    pages[5] = CreateThemePage(pageTheme);
 
     PROPSHEETHEADERW psh = {0};
     psh.dwSize = sizeof(psh);
@@ -103,7 +106,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     psh.hwndParent = nullptr;
     psh.pszCaption = L"微火五笔输入法 设置";
     psh.pszIcon = MAKEINTRESOURCEW(IDI_WINFIRE);
-    psh.nPages = 5;
+    psh.nPages = 6;
     psh.nStartPage = 0;
     psh.phpage = pages;
 

@@ -47,6 +47,11 @@ std::wstring GetConfigDir() {
 std::wstring GetConfigJsonPath() { return GetConfigDir() + L"\\config.json"; }
 std::wstring GetUserDictPath()   { return GetConfigDir() + L"\\user-dict.txt"; }
 std::wstring GetDictDbPath()     { return GetConfigDir() + L"\\wb_py_dict.sqlite"; }
+std::wstring GetThemesDir()      { return GetConfigDir() + L"\\themes"; }
+void EnsureThemesDir() {
+    std::wstring dir = GetThemesDir();
+    CreateDirectoryW(dir.c_str(), nullptr);  // 已存在时返回 ERROR_ALREADY_EXISTS，不算错误
+}
 std::wstring GetTablesDir() {
     // 程序 EXE 同目录下的 tables 子目录（安装版即 %ProgramFiles%\WinFire\tables）
     wchar_t exe[MAX_PATH] = {0};
@@ -215,6 +220,210 @@ void ParseCustomPunctuation(const std::string& json,
     }
 }
 
+// ---- 主题 JSON 编解码（兼容业火 ThemeConfig.swift）----
+
+// 单个十六进制字符转数值
+int HexVal(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// 解析业火颜色：接受 "#RGB"/"#RGBA"/"#RRGGBB"/"#RRGGBBAA" 或
+// {"red":..,"green":..,"blue":..,"opacity":..} 对象。失败返回 false。
+// 与 Fire ColorData.init(hex:) 一致：nibble 形式每位置翻倍成字节；alpha 缺省 255。
+bool ParseColor(const std::string& json, const std::string& key, fire::ColorData& out) {
+    std::string v;
+    if (!FindRaw(json, key, v)) return false;
+    // 对象形式：{"red":..,"green":..,"blue":..,"opacity":..}
+    if (!v.empty() && v[0] == '{') {
+        fire::ColorData c;
+        std::string t;
+        bool any = false;
+        if (FindRaw(v, "red", t)) { try { c.red = std::stod(t); any = true; } catch (...) {} }
+        if (FindRaw(v, "green", t)) { try { c.green = std::stod(t); any = true; } catch (...) {} }
+        if (FindRaw(v, "blue", t)) { try { c.blue = std::stod(t); any = true; } catch (...) {} }
+        if (FindRaw(v, "opacity", t)) { try { c.opacity = std::stod(t); any = true; } catch (...) {} }
+        if (!any) return false;
+        out = c;
+        return true;
+    }
+    // hex 字符串形式（FindRaw 对字符串值已去引号，故 v 不含前后引号）
+    // 跳过前导 #
+    size_t i = 0;
+    if (i < v.size() && v[i] == '#') ++i;
+    std::string hex = v.substr(i);
+    for (char c : hex) if (HexVal(c) < 0) return false;
+    auto pair2byte = [&](size_t pos) -> int {
+        return (HexVal(hex[pos]) << 4) | HexVal(hex[pos + 1]);
+    };
+    long r = 0, g = 0, b = 0, a = 255;
+    if (hex.size() == 3) {
+        r = HexVal(hex[0]) * 17; g = HexVal(hex[1]) * 17; b = HexVal(hex[2]) * 17;
+    } else if (hex.size() == 4) {
+        r = HexVal(hex[0]) * 17; g = HexVal(hex[1]) * 17; b = HexVal(hex[2]) * 17;
+        a = HexVal(hex[3]) * 17;
+    } else if (hex.size() == 6) {
+        r = pair2byte(0); g = pair2byte(2); b = pair2byte(4);
+    } else if (hex.size() == 8) {
+        r = pair2byte(0); g = pair2byte(2); b = pair2byte(4); a = pair2byte(6);
+    } else {
+        return false;
+    }
+    out.red = r / 255.0; out.green = g / 255.0; out.blue = b / 255.0; out.opacity = a / 255.0;
+    return true;
+}
+
+// 输出业火 hexString：#RRGGBB，opacity<1 时追加 AA。大写、clamp、×255 round。
+std::string WriteColor(const fire::ColorData& c) {
+    auto to8 = [](double v) -> int {
+        if (v < 0) v = 0; if (v > 1) v = 1;
+        return (int)(v * 255.0 + 0.5);
+    };
+    char buf[16];
+    if (c.opacity >= 1.0 - 1e-12) {
+        std::snprintf(buf, sizeof(buf), "#%02X%02X%02X", to8(c.red), to8(c.green), to8(c.blue));
+    } else {
+        std::snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X",
+                      to8(c.red), to8(c.green), to8(c.blue), to8(c.opacity));
+    }
+    return buf;
+}
+
+// 定位 json 中 key 对应的对象体（不含外层 { }），返回子串。
+// 用于在 theme 对象里取 "light"/"dark" 子对象交给字段解析。
+bool FindObject(const std::string& json, const std::string& key, std::string& out) {
+    std::string k = "\"" + key + "\"";
+    size_t p = std::string::npos;
+    for (size_t search = 0; (search = json.find(k, search)) != std::string::npos; search += k.size()) {
+        size_t after = search + k.size();
+        size_t q = after;
+        while (q < json.size() && (json[q] == ' ' || json[q] == '\t' || json[q] == '\n' ||
+                                   json[q] == '\r')) ++q;
+        if (q < json.size() && json[q] == ':' && IsRealKeyPos(json, search)) { p = search; break; }
+    }
+    if (p == std::string::npos) return false;
+    p = json.find('{', p + k.size());
+    if (p == std::string::npos) return false;
+    // 配对括号（忽略字符串内的括号——主题值均为 hex 串/数字，不含 {}）
+    int depth = 0;
+    size_t e = p;
+    for (; e < json.size(); ++e) {
+        if (json[e] == '{') ++depth;
+        else if (json[e] == '}') { --depth; if (depth == 0) break; }
+    }
+    if (depth != 0 || e == std::string::npos) return false;
+    out = json.substr(p, e - p + 1);  // 含外层 { }，供子解析复用
+    return true;
+}
+
+// 取浮点字段（缺省时保持 def，与业火 decodeIfPresent 一致）
+float GetFloat(const std::string& json, const std::string& key, float def) {
+    std::string v; if (!FindRaw(json, key, v)) return def;
+    try { return std::stof(v); } catch (...) { return def; }
+}
+
+// 把一个外观对象（json 片段，含 { }）解析填入 ap。缺字段保持 ap 现值（已由结构体默认值设置）。
+void ParseAppearance(const std::string& json, fire::AppearanceThemeConfig& ap) {
+    ParseColor(json, "windowBackgroundColor", ap.window_background_color);
+    ap.window_padding_top = GetFloat(json, "windowPaddingTop", ap.window_padding_top);
+    ap.window_padding_left = GetFloat(json, "windowPaddingLeft", ap.window_padding_left);
+    ap.window_padding_right = GetFloat(json, "windowPaddingRight", ap.window_padding_right);
+    ap.window_padding_bottom = GetFloat(json, "windowPaddingBottom", ap.window_padding_bottom);
+    ap.window_border_radius = GetFloat(json, "windowBorderRadius", ap.window_border_radius);
+    ParseColor(json, "originCodeColor", ap.origin_code_color);
+    ap.origin_candidates_space = GetFloat(json, "originCandidatesSpace", ap.origin_candidates_space);
+    ap.candidate_space = GetFloat(json, "candidateSpace", ap.candidate_space);
+    ParseColor(json, "candidateIndexColor", ap.candidate_index_color);
+    ParseColor(json, "candidateTextColor", ap.candidate_text_color);
+    ParseColor(json, "candidateCodeColor", ap.candidate_code_color);
+    ParseColor(json, "selectedIndexColor", ap.selected_index_color);
+    ParseColor(json, "selectedTextColor", ap.selected_text_color);
+    ParseColor(json, "selectedCodeColor", ap.selected_code_color);
+    ParseColor(json, "pageIndicatorColor", ap.page_indicator_color);
+    ParseColor(json, "pageIndicatorDisabledColor", ap.page_indicator_disabled_color);
+    std::string fn;
+    if (FindRaw(json, "fontName", fn)) ap.font_name = fn;
+    ap.font_size = GetFloat(json, "fontSize", ap.font_size);
+    // v2 字段（v1 缺省时用业火默认：indexFontSize/codeFontSize 取 font_size，enableLiquidGlass=true，
+    // candidateRadius=0，candidatePadding*=2，originPadding*=0，selectedBackgroundColor 透明）
+    ap.enable_liquid_glass = GetBool(json, "enableLiquidGlass", ap.enable_liquid_glass);
+    ParseColor(json, "selectedBackgroundColor", ap.selected_background_color);
+    ap.candidate_radius = GetFloat(json, "candidateRadius",
+        GetFloat(json, "selectedBackgroundRadius", ap.candidate_radius));
+    ap.candidate_padding_top = GetFloat(json, "candidatePaddingTop",
+        GetFloat(json, "selectedPaddingTop", ap.candidate_padding_top));
+    ap.candidate_padding_left = GetFloat(json, "candidatePaddingLeft",
+        GetFloat(json, "selectedPaddingLeft", ap.candidate_padding_left));
+    ap.candidate_padding_right = GetFloat(json, "candidatePaddingRight",
+        GetFloat(json, "selectedPaddingRight", ap.candidate_padding_right));
+    ap.candidate_padding_bottom = GetFloat(json, "candidatePaddingBottom",
+        GetFloat(json, "selectedPaddingBottom", ap.candidate_padding_bottom));
+    ap.origin_padding_top = GetFloat(json, "originPaddingTop", ap.origin_padding_top);
+    ap.origin_padding_left = GetFloat(json, "originPaddingLeft", ap.origin_padding_left);
+    ap.origin_padding_right = GetFloat(json, "originPaddingRight", ap.origin_padding_right);
+    ap.origin_padding_bottom = GetFloat(json, "originPaddingBottom", ap.origin_padding_bottom);
+    ap.index_font_size = GetFloat(json, "indexFontSize", ap.index_font_size);
+    ap.code_font_size = GetFloat(json, "codeFontSize", ap.code_font_size);
+}
+
+// 序列化一个外观对象为 JSON 文本（缩进 base 个空格）
+std::string SerializeAppearance(const fire::AppearanceThemeConfig& ap, const std::string& ind) {
+    std::ostringstream o;
+    o << "{\n";
+    o << ind << "  \"windowBackgroundColor\": \"" << WriteColor(ap.window_background_color) << "\",\n";
+    o << ind << "  \"windowPaddingTop\": " << ap.window_padding_top << ",\n";
+    o << ind << "  \"windowPaddingBottom\": " << ap.window_padding_bottom << ",\n";
+    o << ind << "  \"windowPaddingLeft\": " << ap.window_padding_left << ",\n";
+    o << ind << "  \"windowPaddingRight\": " << ap.window_padding_right << ",\n";
+    o << ind << "  \"windowBorderRadius\": " << ap.window_border_radius << ",\n";
+    o << ind << "  \"enableLiquidGlass\": " << Bool(ap.enable_liquid_glass) << ",\n";
+    o << ind << "  \"originCodeColor\": \"" << WriteColor(ap.origin_code_color) << "\",\n";
+    o << ind << "  \"originCandidatesSpace\": " << ap.origin_candidates_space << ",\n";
+    o << ind << "  \"originPaddingTop\": " << ap.origin_padding_top << ",\n";
+    o << ind << "  \"originPaddingLeft\": " << ap.origin_padding_left << ",\n";
+    o << ind << "  \"originPaddingRight\": " << ap.origin_padding_right << ",\n";
+    o << ind << "  \"originPaddingBottom\": " << ap.origin_padding_bottom << ",\n";
+    o << ind << "  \"candidateSpace\": " << ap.candidate_space << ",\n";
+    o << ind << "  \"candidateIndexColor\": \"" << WriteColor(ap.candidate_index_color) << "\",\n";
+    o << ind << "  \"candidateTextColor\": \"" << WriteColor(ap.candidate_text_color) << "\",\n";
+    o << ind << "  \"candidateCodeColor\": \"" << WriteColor(ap.candidate_code_color) << "\",\n";
+    o << ind << "  \"candidateRadius\": " << ap.candidate_radius << ",\n";
+    o << ind << "  \"candidatePaddingTop\": " << ap.candidate_padding_top << ",\n";
+    o << ind << "  \"candidatePaddingLeft\": " << ap.candidate_padding_left << ",\n";
+    o << ind << "  \"candidatePaddingRight\": " << ap.candidate_padding_right << ",\n";
+    o << ind << "  \"candidatePaddingBottom\": " << ap.candidate_padding_bottom << ",\n";
+    o << ind << "  \"selectedIndexColor\": \"" << WriteColor(ap.selected_index_color) << "\",\n";
+    o << ind << "  \"selectedTextColor\": \"" << WriteColor(ap.selected_text_color) << "\",\n";
+    o << ind << "  \"selectedCodeColor\": \"" << WriteColor(ap.selected_code_color) << "\",\n";
+    o << ind << "  \"selectedBackgroundColor\": \"" << WriteColor(ap.selected_background_color) << "\",\n";
+    o << ind << "  \"pageIndicatorColor\": \"" << WriteColor(ap.page_indicator_color) << "\",\n";
+    o << ind << "  \"pageIndicatorDisabledColor\": \"" << WriteColor(ap.page_indicator_disabled_color) << "\",\n";
+    o << ind << "  \"fontName\": \"" << EscapeJson(ap.font_name) << "\",\n";
+    o << ind << "  \"fontSize\": " << ap.font_size << ",\n";
+    o << ind << "  \"indexFontSize\": " << ap.index_font_size << ",\n";
+    o << ind << "  \"codeFontSize\": " << ap.code_font_size << "\n";
+    o << ind << "}";
+    return o.str();
+}
+
+// 解析完整主题 JSON（业火独立主题文件或 config.json 内 theme 段）。
+// 校验 id/name/author 非空；v1/v2 都接受，缺 v2 字段用结构体默认值。
+bool ParseThemeJsonImpl(const std::string& json, fire::ThemeConfig& out) {
+    std::string id, name, author;
+    if (!FindRaw(json, "id", id) || id.empty()) return false;
+    if (!FindRaw(json, "name", name) || name.empty()) return false;
+    if (!FindRaw(json, "author", author) || author.empty()) return false;
+    out.id = id; out.name = name; out.author = author;
+    out.schema_version = GetInt(json, "schemaVersion", out.schema_version);
+    out.dark_mode_preference = GetInt(json, "darkModePreference", out.dark_mode_preference);
+    std::string lightObj, darkObj;
+    if (FindObject(json, "light", lightObj)) ParseAppearance(lightObj, out.light);
+    if (FindObject(json, "dark", darkObj)) ParseAppearance(darkObj, out.dark);
+    return true;
+}
+
 }  // namespace
 
 bool ConfigStore::Load(fire::Config& c) {
@@ -286,6 +495,15 @@ bool ConfigStore::LoadFromString(fire::Config& c, const std::string& json) {
             c.py_table_path = v;
         }
     }
+
+    // 主题（v1/v2 兼容）。config.json 无 theme 段时保持 c.theme 默认值。
+    {
+        std::string themeObj;
+        if (FindObject(json, "theme", themeObj)) {
+            // ParseThemeJsonImpl 要求 id/name/author 非空；内联主题必含这些字段。
+            ParseThemeJsonImpl(themeObj, c.theme);
+        }
+    }
     return true;
 }
 
@@ -331,7 +549,17 @@ std::string ConfigStore::Serialize(const fire::Config& c) {
     }
     o << "],\n";
     o << "  \"wbTablePath\": \"" << EscapeJson(c.wb_table_path) << "\",\n";
-    o << "  \"pyTablePath\": \"" << EscapeJson(c.py_table_path) << "\"\n";
+    o << "  \"pyTablePath\": \"" << EscapeJson(c.py_table_path) << "\",\n";
+    // 主题（内联完整内容，作为唯一真相源经现有 config_json IPC 下发 DLL）。
+    o << "  \"theme\": {\n";
+    o << "    \"schemaVersion\": " << c.theme.schema_version << ",\n";
+    o << "    \"id\": \"" << EscapeJson(c.theme.id) << "\",\n";
+    o << "    \"name\": \"" << EscapeJson(c.theme.name) << "\",\n";
+    o << "    \"author\": \"" << EscapeJson(c.theme.author) << "\",\n";
+    o << "    \"darkModePreference\": " << c.theme.dark_mode_preference << ",\n";
+    o << "    \"light\": " << SerializeAppearance(c.theme.light, "    ") << ",\n";
+    o << "    \"dark\": " << SerializeAppearance(c.theme.dark, "    ") << "\n";
+    o << "  }\n";
     o << "}\n";
     return o.str();
 }
@@ -358,6 +586,37 @@ bool ConfigStore::SaveAtomicFromString(const std::string& json) {
         return false;
     }
     return true;
+}
+
+// 把主题序列化为业火格式独立 JSON（不含 config.json 其它字段）。
+// 供导出主题/写主题库文件使用：顶层即 schemaVersion/id/name/author/light/dark。
+std::string SerializeTheme(const fire::ThemeConfig& theme) {
+    std::ostringstream o;
+    o << "{\n";
+    o << "  \"schemaVersion\": " << theme.schema_version << ",\n";
+    o << "  \"id\": \"" << EscapeJson(theme.id) << "\",\n";
+    o << "  \"name\": \"" << EscapeJson(theme.name) << "\",\n";
+    o << "  \"author\": \"" << EscapeJson(theme.author) << "\",\n";
+    o << "  \"light\": " << SerializeAppearance(theme.light, "  ") << ",\n";
+    o << "  \"dark\": " << SerializeAppearance(theme.dark, "  ") << "\n";
+    o << "}\n";
+    return o.str();
+}
+
+// 解析主题 JSON 文本（独立主题文件）。校验 id/name/author 非空。
+bool ParseThemeJson(const std::string& json, fire::ThemeConfig& out) {
+    if (json.empty()) return false;
+    // 用一份可变默认值承载缺省字段，再让 ParseThemeJsonImpl 覆盖命中字段。
+    fire::ThemeConfig fresh;
+    return ParseThemeJsonImpl(json, fresh) ? (out = fresh, true) : false;
+}
+
+bool LoadThemeFile(const std::wstring& path, fire::ThemeConfig& out) {
+    return ParseThemeJson(ReadFileUtf8(path), out);
+}
+
+bool SaveThemeFile(const std::wstring& path, const fire::ThemeConfig& theme) {
+    return WriteFileUtf8(path, SerializeTheme(theme));
 }
 
 }  // namespace firecfg

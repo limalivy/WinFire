@@ -7,6 +7,7 @@
 #include "AppModePage.h"
 #include "StatisticsPage.h"
 #include "DictPage.h"
+#include "ThemePage.h"
 
 LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 
@@ -107,4 +108,21 @@ BEGIN
     PUSHBUTTON "生成词库",   IDC_BTN_BUILD_DICT,    66, 64, 80, 20
     PUSHBUTTON "编辑用户词库",IDC_BTN_EDIT_USERDICT, 150, 64, 90, 20
     LTEXT   "",              IDC_STATIC_BUILD_STATUS,12, 96, 236, 28
+END
+
+//////////////////// 主题管理页 ////////////////////
+IDD_PAGE_THEME DIALOGEX 0, 0, 260, 240
+STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
+CAPTION "主题"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    LTEXT   "深色模式:",     IDC_STATIC,            12, 14, 50, 10
+    COMBOBOX                 IDC_CMB_DARK_MODE,     66, 12, 120, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT   "主题库（%APPDATA%\\WinFire\\themes）：", IDC_STATIC, 12, 38, 236, 10
+    CONTROL "",              IDC_LIST_THEMES,       "SysListView32", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, 12, 50, 236, 130
+    PUSHBUTTON "使用",       IDC_BTN_THEME_USE,     12, 186, 50, 18
+    PUSHBUTTON "导入",       IDC_BTN_THEME_IMPORT,  66, 186, 50, 18
+    PUSHBUTTON "导出",       IDC_BTN_THEME_EXPORT, 120, 186, 50, 18
+    PUSHBUTTON "删除",       IDC_BTN_THEME_DELETE, 174, 186, 50, 18
+    LTEXT   "",              IDC_STATIC_THEME_STATUS, 12, 210, 236, 24
 END

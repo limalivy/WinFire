@@ -22,17 +22,18 @@ struct ColorData {
 };
 
 // 单一外观（浅色/深色），对应 ApperanceThemeConfig
+// 字段与业火主题 JSON（camelCase）一一对应；v2 新增字段在末尾，缺省时取业火默认值。
 struct AppearanceThemeConfig {
     ColorData window_background_color{1, 1, 1, 1};
-    float window_padding_top = 6;
-    float window_padding_left = 10;
-    float window_padding_right = 10;
-    float window_padding_bottom = 6;
+    float window_padding_top = 0;
+    float window_padding_left = 0;
+    float window_padding_right = 0;
+    float window_padding_bottom = 0;
     float window_border_radius = 6;
 
     ColorData origin_code_color{0.3, 0.3, 0.3, 1};
-    float origin_candidates_space = 6;
-    float candidate_space = 8;
+    float origin_candidates_space = 0;
+    float candidate_space = 0;
 
     ColorData candidate_index_color{0.1, 0.1, 0.1, 1};
     ColorData candidate_text_color{0.1, 0.1, 0.1, 1};
@@ -47,15 +48,35 @@ struct AppearanceThemeConfig {
 
     std::string font_name = "system";
     float font_size = 20;
+
+    // v2 新增字段（业火 schemaVersion=2）。v1 主题缺这些字段时取下列默认值。
+    bool enable_liquid_glass = true;          // Windows 无 NSVisualEffectView 等价物，渲染层忽略
+    ColorData selected_background_color{0, 0, 0, 0};  // 选中项圆角背景；全透=不画
+    float candidate_radius = 0;               // 选中背景圆角半径
+    float candidate_padding_top = 2;
+    float candidate_padding_left = 2;
+    float candidate_padding_right = 2;
+    float candidate_padding_bottom = 2;
+    float origin_padding_top = 0;
+    float origin_padding_left = 0;
+    float origin_padding_right = 0;
+    float origin_padding_bottom = 0;
+    float index_font_size = 20;               // 序号字号；v1 取 font_size
+    float code_font_size = 20;                // 编码提示字号；v1 取 font_size
 };
 
 // 主题，对应 ThemeConfig
 struct ThemeConfig {
+    int schema_version = 2;       // 业火 themeSchemaVersion；导入时按文件值，未写则 2
     std::string id = "default";
     std::string name = "默认";
     std::string author = "微火输入法";
     AppearanceThemeConfig light;   // 浅色
     AppearanceThemeConfig dark;    // 深色
+
+    // 深色模式偏好：0=跟随系统，1=强制浅色，2=强制深色。
+    // 渲染层据此与 light/dark 配色选择。跟随系统时读 Windows 注册表 AppsUseLightTheme。
+    int dark_mode_preference = 0;
 
     const AppearanceThemeConfig& appearance(bool is_dark) const {
         return is_dark ? dark : light;

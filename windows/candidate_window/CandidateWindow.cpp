@@ -146,8 +146,9 @@ void CandidateWindowController::Destroy() {
     FIRE_LOG_ENTER();
     // 必须在 GdiplusShutdown 之前释放所有 GDI+ 对象，否则后续成员析构
     //（unique_ptr 自动释放 cachedFont_/cachedFontFamily_）会在 GDI+ 已关闭后操作 GDI+ 对象。
-    cachedFont_.reset();
-    cachedFontFamily_.reset();
+    textFont_ = {};
+    indexFont_ = {};
+    codeFont_ = {};
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
     ownerHwnd_ = nullptr;  // 窗口销毁后 owner 同步失效
     if (gdiplusToken_) { GdiplusShutdown(gdiplusToken_); gdiplusToken_ = 0; }
@@ -203,6 +204,10 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
             FIRE_LOG(L"[WinFire] WM_LBUTTONUP: idx=%d list_size=%zu\n", idx, view_.list.size());
             if (idx == -2) {
                 LaunchConfigTool();
+            } else if (idx == -3 && onPage_) {
+                onPage_(-1);  // 上翻页指示器
+            } else if (idx == -4 && onPage_) {
+                onPage_(+1);  // 下翻页指示器
             } else if (idx >= 0 && idx < (int)view_.list.size() && onSelect_) {
                 onSelect_(view_.list[idx]);
             }
@@ -234,24 +239,33 @@ LRESULT CandidateWindowController::HandleMessage(HWND hwnd, UINT msg, WPARAM wPa
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-Gdiplus::Font* CandidateWindowController::GetCachedFont(float dpi) {
+Gdiplus::Font* CandidateWindowController::GetCachedFont(int which, float dpi) {
     const auto& ap = config_.theme.appearance(darkMode_);
-    // "system" → 物理字体名（与原内联构造保持一致）
-    std::string fontName = (ap.font_name == "system") ? "Microsoft YaHei" : ap.font_name;
-    float fontSize = ap.font_size * dpi;
-    // 命中缓存：font_name / size / dpi 均未变则直接复用
-    if (cachedFont_ && cachedFontName_ == fontName &&
-        cachedFontSize_ == fontSize && cachedDpi_ == dpi) {
-        return cachedFont_.get();
+    // 业火 "system" 或空字串 → 默认中文字体（Microsoft YaHei）。
+    // 显式字体名不可用时也回退 YaHei，避免 FontFamily 构造失败导致 MeasureString/DrawString
+    // 返回零尺寸（候选窗缩小为只剩 padding + 页面指示器、且无文字绘制）。
+    auto resolveName = [](const std::string& n) -> std::string {
+        if (n.empty() || n == "system") return "Microsoft YaHei";
+        return n;
+    };
+    std::string fontName = resolveName(ap.font_name);
+    // which: 0=text(font_size) 1=index(index_font_size) 2=code(code_font_size)
+    float themeSize = (which == 1) ? ap.index_font_size : (which == 2) ? ap.code_font_size : ap.font_size;
+    float fontSize = themeSize * dpi;
+    FontCache* fc = (which == 1) ? &indexFont_ : (which == 2) ? &codeFont_ : &textFont_;
+    if (fc->matches(fontName, fontSize, dpi)) return fc->font.get();
+    fc->family = std::make_unique<Gdiplus::FontFamily>(U8ToU16(fontName).c_str());
+    // 指定字体不存在（FontFamily 不可用）→ 回退 Microsoft YaHei
+    if (!fc->family->IsAvailable()) {
+        fontName = "Microsoft YaHei";
+        fc->family = std::make_unique<Gdiplus::FontFamily>(U8ToU16(fontName).c_str());
     }
-    // 失效：重建 FontFamily + Font
-    cachedFontFamily_ = std::make_unique<Gdiplus::FontFamily>(U8ToU16(fontName).c_str());
-    cachedFont_ = std::make_unique<Gdiplus::Font>(cachedFontFamily_.get(), fontSize,
-                                                  Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    cachedFontName_ = fontName;
-    cachedFontSize_ = fontSize;
-    cachedDpi_ = dpi;
-    return cachedFont_.get();
+    fc->font = std::make_unique<Gdiplus::Font>(fc->family.get(), fontSize,
+                                               Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    fc->name = fontName;
+    fc->pixelSize = fontSize;
+    fc->dpi = dpi;
+    return fc->font.get();
 }
 
 SIZE CandidateWindowController::Measure() {
@@ -269,11 +283,13 @@ SIZE CandidateWindowController::Measure() {
         return sz;
     }
     Graphics g(hdc);
-    Font* font = GetCachedFont(dpi);  // 跨 Show 缓存，避免每键重建
+    Font* textFont = GetCachedFont(0, dpi);   // 候选文本（font_size）
+    Font* indexFont = GetCachedFont(1, dpi);  // 序号（index_font_size）
+    Font* codeFont = GetCachedFont(2, dpi);   // 编码提示（code_font_size）
 
-    auto measure = [&](const std::wstring& t) -> SizeF {
+    auto measure = [&g](const std::wstring& t, Font* f) -> SizeF {
         RectF box;
-        g.MeasureString(t.c_str(), (int)t.size(), font, PointF(0, 0), &box);
+        g.MeasureString(t.c_str(), (int)t.size(), f, PointF(0, 0), &box);
         return SizeF(box.Width, box.Height);
     };
 
@@ -281,16 +297,24 @@ SIZE CandidateWindowController::Measure() {
     float padR = ap.window_padding_right * dpi;
     float padT = ap.window_padding_top * dpi;
     float padB = ap.window_padding_bottom * dpi;
+    float originPadT = ap.origin_padding_top * dpi;
+    float originPadL = ap.origin_padding_left * dpi;
+    float originPadR = ap.origin_padding_right * dpi;
+    float originPadB = ap.origin_padding_bottom * dpi;
+    float candPadT = ap.candidate_padding_top * dpi;
+    float candPadL = ap.candidate_padding_left * dpi;
+    float candPadR = ap.candidate_padding_right * dpi;
+    float candPadB = ap.candidate_padding_bottom * dpi;
 
     // 组字区（缓存区）行
-    SizeF originSz = measure(U8ToU16(view_.original_string));
+    SizeF originSz = measure(U8ToU16(view_.original_string), textFont);
     float lineH = originSz.Height;
-    float maxW = originSz.Width;
+    float maxW = originSz.Width + originPadL + originPadR;
 
     bool horizontal = config_.candidates_direction == fire::CandidatesDirection::Horizontal;
     float candSpace = ap.candidate_space * dpi;
     float originSpace = ap.origin_candidates_space * dpi;
-    float x = padL, y = padT + lineH + originSpace;
+    float x = padL, y = padT + originPadT + lineH + originPadB + originSpace;
     float rowW = 0, totalH = y;
 
     candidateRects_.clear();
@@ -303,11 +327,13 @@ SIZE CandidateWindowController::Measure() {
             std::string hint = GetShownCode(view_.list[i], view_.original_string);
             if (!hint.empty()) codeHint = L" " + U8ToU16(hint);
         }
-        SizeF idxSz = measure(index);
-        SizeF txtSz = measure(txt);
-        SizeF codeSz = codeHint.empty() ? SizeF(0, 0) : measure(codeHint);
-        float totalW = idxSz.Width + txtSz.Width + codeSz.Width;
-        float h = (std::max)({idxSz.Height, txtSz.Height, codeSz.Height});
+        SizeF idxSz = measure(index, indexFont);
+        SizeF txtSz = measure(txt, textFont);
+        SizeF codeSz = codeHint.empty() ? SizeF(0, 0) : measure(codeHint, codeFont);
+        float innerW = idxSz.Width + txtSz.Width + codeSz.Width;
+        float totalW = candPadL + innerW + candPadR;
+        float innerH = (std::max)({idxSz.Height, txtSz.Height, codeSz.Height});
+        float h = candPadT + innerH + candPadB;
         RECT r;
         if (horizontal) {
             r.left = (LONG)x; r.top = (LONG)y;
@@ -329,7 +355,7 @@ SIZE CandidateWindowController::Measure() {
     // 其余模式不显示（menuRect_ 留零矩形，HitTest 也不会命中）。
     if (IsReverseLookup(config_, view_.original_string)) {
         const wchar_t kMenuIcon[] = L"\u2699";
-        SizeF menuSz = measure(kMenuIcon);
+        SizeF menuSz = measure(kMenuIcon, textFont);
         RECT r;
         if (horizontal) {
             r.left = (LONG)x; r.top = (LONG)y;
@@ -347,6 +373,40 @@ SIZE CandidateWindowController::Measure() {
         menuRect_ = r;
     } else {
         menuRect_ = {0, 0, 0, 0};
+    }
+
+    // 页面指示器（上下翻页箭头）：list.size()>1 || hasPrev || hasNext 时显示。
+    // 业火规则：横向竖排两箭头放候选列表右侧、与候选行垂直居中（不含原码行）；
+    // 竖向横排放候选列表下方。大小 = fontSize*0.5。
+    bool showIndicator = view_.list.size() > 1 || view_.has_prev || view_.has_next;
+    if (showIndicator) {
+        float indSize = ap.font_size * 0.5f * dpi;
+        float indGap = 2.0f * dpi;  // 两箭头之间留 2px
+        float indTotal = 2 * indSize + indGap;  // 竖排两箭头总高
+        if (horizontal) {
+            // 竖排，放在当前行末尾（候选列表右侧），与候选行（不含原码）垂直居中
+            float ix = (std::max)(rowW, x) + candSpace;
+            float candTop = y;        // 候选行起始 y（循环只增 x，y 保持候选行顶部）
+            float candBot = totalH;   // 候选行底部
+            float iy = candTop + ((candBot - candTop) - indTotal) / 2.0f;
+            pageUpRect_ = {(LONG)ix, (LONG)iy, (LONG)(ix + indSize), (LONG)(iy + indSize)};
+            pageDownRect_ = {(LONG)ix, (LONG)(iy + indSize + indGap),
+                             (LONG)(ix + indSize), (LONG)(iy + 2 * indSize + indGap)};
+            rowW = (std::max)(rowW, ix + indSize);
+            totalH = (std::max)(totalH, iy + indTotal);
+        } else {
+            // 横排，放在候选列表下方
+            float ix = padL;
+            float iy = totalH + candSpace;
+            pageUpRect_ = {(LONG)ix, (LONG)iy, (LONG)(ix + indSize), (LONG)(iy + indSize)};
+            pageDownRect_ = {(LONG)(ix + indSize + indGap), (LONG)iy,
+                             (LONG)(ix + 2 * indSize + indGap), (LONG)(iy + indSize)};
+            rowW = (std::max)(rowW, padL + 2 * indSize + indGap);
+            totalH = iy + indSize;
+        }
+    } else {
+        pageUpRect_ = {0, 0, 0, 0};
+        pageDownRect_ = {0, 0, 0, 0};
     }
 
     maxW = (std::max)(maxW, rowW - padL);
@@ -435,14 +495,19 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
         g.FillPath(&bg, &path);
     }
 
-    Font* font = GetCachedFont(dpi);  // 跨 Show 缓存，避免每键重建
+    Font* textFont = GetCachedFont(0, dpi);   // 候选文本（font_size）
+    Font* indexFont = GetCachedFont(1, dpi);  // 序号（index_font_size）
+    Font* codeFont = GetCachedFont(2, dpi);   // 编码提示（code_font_size）
+
+    float candPadT = ap.candidate_padding_top * dpi;
+    float candPadL = ap.candidate_padding_left * dpi;
 
     // 组字区（缓存区）
     SolidBrush originBrush(ToColor(ap.origin_code_color));
     std::wstring origin = U8ToU16(view_.original_string);
-    g.DrawString(origin.c_str(), (int)origin.size(), font,
-                 PointF((REAL)(ap.window_padding_left * dpi),
-                        (REAL)(ap.window_padding_top * dpi)),
+    g.DrawString(origin.c_str(), (int)origin.size(), textFont,
+                 PointF((REAL)(ap.window_padding_left * dpi + ap.origin_padding_left * dpi),
+                        (REAL)(ap.window_padding_top * dpi + ap.origin_padding_top * dpi)),
                  &originBrush);
 
     // 候选列表（首个高亮）
@@ -452,6 +517,10 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     SolidBrush selIdxBrush(ToColor(ap.selected_index_color));
     SolidBrush selTextBrush(ToColor(ap.selected_text_color));
     SolidBrush selCodeBrush(ToColor(ap.selected_code_color));
+    // 选中项圆角背景（非全透时才画）
+    SolidBrush selBgBrush(ToColor(ap.selected_background_color));
+    bool drawSelBg = ap.selected_background_color.opacity > 0.0001;
+    float candRadius = ap.candidate_radius * dpi;
 
     for (size_t i = 0; i < view_.list.size() && i < candidateRects_.size(); ++i) {
         const RECT& r = candidateRects_[i];
@@ -464,22 +533,35 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
             std::string hint = GetShownCode(view_.list[i], view_.original_string);
             if (!hint.empty()) codeHint = L" " + U8ToU16(hint);
         }
-        // 按顺序绘制：序号 → 文本 → 编码提示，各段用对应颜色
+        // 选中项背景圆角矩形（先画背景，再画文字，避免覆盖）
+        if (selected && drawSelBg) {
+            GraphicsPath bp;
+            RectF br((REAL)r.left, (REAL)r.top, (REAL)(r.right - r.left), (REAL)(r.bottom - r.top));
+            float rr = (std::min)(candRadius, (std::min)(br.Width, br.Height) / 2.0f);
+            bp.AddArc(br.X, br.Y, rr * 2, rr * 2, 180, 90);
+            bp.AddArc(br.GetRight() - rr * 2, br.Y, rr * 2, rr * 2, 270, 90);
+            bp.AddArc(br.GetRight() - rr * 2, br.GetBottom() - rr * 2, rr * 2, rr * 2, 0, 90);
+            bp.AddArc(br.X, br.GetBottom() - rr * 2, rr * 2, rr * 2, 90, 90);
+            bp.CloseFigure();
+            g.FillPath(&selBgBrush, &bp);
+        }
+        // 按顺序绘制：序号 → 文本 → 编码提示，各段用对应字号与颜色
         RectF idxBox, txtBox;
-        g.MeasureString(index.c_str(), (int)index.size(), font, PointF(0, 0), &idxBox);
-        g.MeasureString(txt.c_str(), (int)txt.size(), font, PointF(0, 0), &txtBox);
-        float curX = (REAL)r.left;
-        g.DrawString(index.c_str(), (int)index.size(), font,
-                     PointF(curX, (REAL)r.top),
+        g.MeasureString(index.c_str(), (int)index.size(), indexFont, PointF(0, 0), &idxBox);
+        g.MeasureString(txt.c_str(), (int)txt.size(), textFont, PointF(0, 0), &txtBox);
+        float curX = (REAL)r.left + candPadL;
+        float curY = (REAL)r.top + candPadT;
+        g.DrawString(index.c_str(), (int)index.size(), indexFont,
+                     PointF(curX, curY),
                      selected ? &selIdxBrush : &idxBrush);
         curX += idxBox.Width;
-        g.DrawString(txt.c_str(), (int)txt.size(), font,
-                     PointF(curX, (REAL)r.top),
+        g.DrawString(txt.c_str(), (int)txt.size(), textFont,
+                     PointF(curX, curY),
                      selected ? &selTextBrush : &textBrush);
         curX += txtBox.Width;
         if (!codeHint.empty()) {
-            g.DrawString(codeHint.c_str(), (int)codeHint.size(), font,
-                         PointF(curX, (REAL)r.top),
+            g.DrawString(codeHint.c_str(), (int)codeHint.size(), codeFont,
+                         PointF(curX, curY),
                          selected ? &selCodeBrush : &codeBrush);
         }
     }
@@ -488,9 +570,36 @@ void CandidateWindowController::PaintToGraphics(Graphics& g, const SIZE& sz) {
     if (IsReverseLookup(config_, view_.original_string)) {
         const wchar_t kMenuIcon[] = L"\u2699";
         SolidBrush menuBrush(ToColor(ap.candidate_index_color));
-        g.DrawString(kMenuIcon, 1, font,
+        g.DrawString(kMenuIcon, 1, textFont,
                      PointF((REAL)menuRect_.left, (REAL)menuRect_.top),
                      &menuBrush);
+    }
+
+    // 页面指示器（上下翻页箭头）。Measure 已在显示时填好 pageUpRect_/pageDownRect_。
+    // 业火用 template image 渲染纯色；此处用等价的纯色三角形自绘，无需引入 PNG 资源。
+    auto drawArrow = [&](const RECT& r, bool up, bool disabled) {
+        if (r.right <= r.left || r.bottom <= r.top) return;
+        const Color& c = disabled ? ToColor(ap.page_indicator_disabled_color)
+                                  : ToColor(ap.page_indicator_color);
+        SolidBrush br(c);
+        GraphicsPath p;
+        REAL cx = ((REAL)r.left + r.right) / 2.0f;
+        if (up) {
+            p.AddLine((REAL)r.left, (REAL)r.bottom, cx, (REAL)r.top);
+            p.AddLine(cx, (REAL)r.top, (REAL)r.right, (REAL)r.bottom);
+            p.AddLine((REAL)r.right, (REAL)r.bottom, (REAL)r.left, (REAL)r.bottom);
+        } else {
+            p.AddLine((REAL)r.left, (REAL)r.top, (REAL)r.right, (REAL)r.top);
+            p.AddLine((REAL)r.right, (REAL)r.top, cx, (REAL)r.bottom);
+            p.AddLine(cx, (REAL)r.bottom, (REAL)r.left, (REAL)r.top);
+        }
+        p.CloseFigure();
+        g.FillPath(&br, &p);
+    };
+    bool showIndicator = view_.list.size() > 1 || view_.has_prev || view_.has_next;
+    if (showIndicator) {
+        drawArrow(pageUpRect_, true, !view_.has_prev);
+        drawArrow(pageDownRect_, false, !view_.has_next);
     }
 }
 
@@ -561,7 +670,7 @@ void CandidateWindowController::Show(const fire::CandidatesView& view) {
         FIRE_LOG_EXIT();
         return;
     }
-    darkMode_ = false;  // 主题未适配深色模式，固定用 light 配色
+    darkMode_ = ResolveDarkMode();  // 按 dark_mode_preference + 系统深浅色解析
     SIZE sz = Measure();
     POINT pos = ComputePosition(sz);
     SetWindowPos(hwnd_, HWND_TOPMOST, pos.x, pos.y, sz.cx, sz.cy,
@@ -604,16 +713,21 @@ void CandidateWindowController::ShowToast(const std::string& label, const fire::
 }
 
 int CandidateWindowController::HitTest(POINT pt) const {
+    // 页面指示器优先判定（在候选矩形之前），命中时返回 -3(上翻)/-4(下翻)。
+    // 不可用方向（!has_prev/!has_next）的矩形不命中，与业火点击禁用语义一致。
+    auto inRect = [&](const RECT& r) {
+        return pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom;
+    };
+    if (pageUpRect_.right > pageUpRect_.left && view_.has_prev && inRect(pageUpRect_)) return -3;
+    if (pageDownRect_.right > pageDownRect_.left && view_.has_next && inRect(pageDownRect_)) return -4;
     for (size_t i = 0; i < candidateRects_.size(); ++i) {
         const RECT& r = candidateRects_[i];
-        if (pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom) {
+        if (inRect(r)) {
             return (int)i;
         }
     }
     // 菜单图标命中（仅反查模式下 menuRect_ 非空；零矩形时跳过，避免误命中左上角）
-    if (menuRect_.right > menuRect_.left && menuRect_.bottom > menuRect_.top &&
-        pt.x >= menuRect_.left && pt.x <= menuRect_.right &&
-        pt.y >= menuRect_.top && pt.y <= menuRect_.bottom) {
+    if (menuRect_.right > menuRect_.left && menuRect_.bottom > menuRect_.top && inRect(menuRect_)) {
         return -2;
     }
     return -1;
@@ -636,6 +750,29 @@ void CandidateWindowController::LaunchConfigTool() {
     HINSTANCE h = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     FIRE_LOG(L"[WinFire] LaunchConfigTool: launch '%ls' hinst=%p err=%lu\n",
              path.c_str(), (void*)h, GetLastError());
+}
+
+bool CandidateWindowController::ResolveDarkMode() const {
+    // dark_mode_preference：0=跟随系统，1=强制浅色，2=强制深色。
+    int pref = config_.theme.dark_mode_preference;
+    if (pref == 1) return false;
+    if (pref == 2) return true;
+    // 跟随系统：读 HKCU\...\Themes\Personalize\AppsUseLightTheme（0=深色，1=浅色）。
+    // 仅用当前用户注册表（候选窗运行在用户会话，HKCU 可靠）。读取失败默认浅色。
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD value = 1, size = sizeof(value), type = 0;
+        BOOL light = TRUE;
+        if (RegQueryValueExW(hKey, L"AppsUseLightTheme", nullptr, &type,
+                             (BYTE*)&value, &size) == ERROR_SUCCESS && type == REG_DWORD) {
+            light = (value != 0);
+        }
+        RegCloseKey(hKey);
+        return !light;
+    }
+    return false;
 }
 
 }  // namespace firewin

@@ -380,7 +380,82 @@ begin
     '  "toggleInputModeKey": 0,' + #13#10 +
     '  "enableStatistics": false,' + #13#10 +
     '  "wbTablePath": "{APP}\\tables\\wb_table.txt",' + #13#10 +
-    '  "pyTablePath": "{APP}\\tables\\py_table.txt"' + #13#10 +
+    '  "pyTablePath": "{APP}\\tables\\py_table.txt",' + #13#10 +
+    '  "theme": {' + #13#10 +
+    '    "schemaVersion": 2,' + #13#10 +
+    '    "id": "default",' + #13#10 +
+    '    "name": "默认",' + #13#10 +
+    '    "author": "微火输入法",' + #13#10 +
+    '    "darkModePreference": 0,' + #13#10 +
+    '    "light": {' + #13#10 +
+    '      "windowBackgroundColor": "#FFFFFF",' + #13#10 +
+    '      "windowPaddingTop": 0,' + #13#10 +
+    '      "windowPaddingBottom": 0,' + #13#10 +
+    '      "windowPaddingLeft": 0,' + #13#10 +
+    '      "windowPaddingRight": 0,' + #13#10 +
+    '      "windowBorderRadius": 6,' + #13#10 +
+    '      "enableLiquidGlass": true,' + #13#10 +
+    '      "originCodeColor": "#4D4D4D",' + #13#10 +
+    '      "originCandidatesSpace": 0,' + #13#10 +
+    '      "originPaddingTop": 0,' + #13#10 +
+    '      "originPaddingLeft": 0,' + #13#10 +
+    '      "originPaddingRight": 0,' + #13#10 +
+    '      "originPaddingBottom": 0,' + #13#10 +
+    '      "candidateSpace": 0,' + #13#10 +
+    '      "candidateIndexColor": "#1A1A1A",' + #13#10 +
+    '      "candidateTextColor": "#1A1A1A",' + #13#10 +
+    '      "candidateCodeColor": "#4D4D4DCC",' + #13#10 +
+    '      "candidateRadius": 0,' + #13#10 +
+    '      "candidatePaddingTop": 2,' + #13#10 +
+    '      "candidatePaddingLeft": 2,' + #13#10 +
+    '      "candidatePaddingRight": 2,' + #13#10 +
+    '      "candidatePaddingBottom": 2,' + #13#10 +
+    '      "selectedIndexColor": "#DC143C",' + #13#10 +
+    '      "selectedTextColor": "#DC143C",' + #13#10 +
+    '      "selectedCodeColor": "#DC143CCC",' + #13#10 +
+    '      "selectedBackgroundColor": "#0000000F",' + #13#10 +
+    '      "pageIndicatorColor": "#DC143C",' + #13#10 +
+    '      "pageIndicatorDisabledColor": "#DC143C66",' + #13#10 +
+    '      "fontName": "system",' + #13#10 +
+    '      "fontSize": 20,' + #13#10 +
+    '      "indexFontSize": 20,' + #13#10 +
+    '      "codeFontSize": 20' + #13#10 +
+    '    },' + #13#10 +
+    '    "dark": {' + #13#10 +
+    '      "windowBackgroundColor": "#000000",' + #13#10 +
+    '      "windowPaddingTop": 0,' + #13#10 +
+    '      "windowPaddingBottom": 0,' + #13#10 +
+    '      "windowPaddingLeft": 0,' + #13#10 +
+    '      "windowPaddingRight": 0,' + #13#10 +
+    '      "windowBorderRadius": 6,' + #13#10 +
+    '      "enableLiquidGlass": true,' + #13#10 +
+    '      "originCodeColor": "#FFFFFF",' + #13#10 +
+    '      "originCandidatesSpace": 0,' + #13#10 +
+    '      "originPaddingTop": 0,' + #13#10 +
+    '      "originPaddingLeft": 0,' + #13#10 +
+    '      "originPaddingRight": 0,' + #13#10 +
+    '      "originPaddingBottom": 0,' + #13#10 +
+    '      "candidateSpace": 0,' + #13#10 +
+    '      "candidateIndexColor": "#E6E6E6",' + #13#10 +
+    '      "candidateTextColor": "#E6E6E6",' + #13#10 +
+    '      "candidateCodeColor": "#B3B3B3CC",' + #13#10 +
+    '      "candidateRadius": 0,' + #13#10 +
+    '      "candidatePaddingTop": 2,' + #13#10 +
+    '      "candidatePaddingLeft": 2,' + #13#10 +
+    '      "candidatePaddingRight": 2,' + #13#10 +
+    '      "candidatePaddingBottom": 2,' + #13#10 +
+    '      "selectedIndexColor": "#DC143C",' + #13#10 +
+    '      "selectedTextColor": "#DC143C",' + #13#10 +
+    '      "selectedCodeColor": "#DC143CCC",' + #13#10 +
+    '      "selectedBackgroundColor": "#FFFFFF14",' + #13#10 +
+    '      "pageIndicatorColor": "#DC143C",' + #13#10 +
+    '      "pageIndicatorDisabledColor": "#DC143C66",' + #13#10 +
+    '      "fontName": "system",' + #13#10 +
+    '      "fontSize": 20,' + #13#10 +
+    '      "indexFontSize": 20,' + #13#10 +
+    '      "codeFontSize": 20' + #13#10 +
+    '    }' + #13#10 +
+    '  }' + #13#10 +
     '}';
   appDir := ExpandConstant('{app}');
   StringChange(tmpl, '{APP}', appDir);

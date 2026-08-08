@@ -63,19 +63,29 @@ private:
     fire::CandidatesView view_;
     std::vector<RECT> candidateRects_;  // 命中测试用
     RECT menuRect_ = {0, 0, 0, 0};      // ⚙ 菜单图标命中区域
+    RECT pageUpRect_ = {0, 0, 0, 0};    // 上翻页指示器命中区域（不可用时仍记录矩形，点击被忽略）
+    RECT pageDownRect_ = {0, 0, 0, 0};  // 下翻页指示器命中区域
     bool visible_ = false;
-    bool darkMode_ = false;             // 主题未适配深色模式，固定 false（用 light 配色）
+    bool darkMode_ = false;             // 主题深色模式（按 dark_mode_preference 与系统深浅色解析）
     POINT lastPos_ = {0, 0};            // 上次窗口左上角（UpdateLayeredWindow 需要）
 
     // Font 缓存：Measure + PaintToGraphics 共用，避免每次候选刷新重建 4 个 GDI+ 对象。
-    // 仅在 (font_name, font_size, dpi) 变化时重建。
-    std::unique_ptr<Gdiplus::FontFamily> cachedFontFamily_;
-    std::unique_ptr<Gdiplus::Font> cachedFont_;
-    std::string cachedFontName_;        // 已映射后的物理字体名（"system"→"Microsoft YaHei"）
-    float cachedFontSize_ = 0;
-    float cachedDpi_ = 0;
-    // 按 dpi 取缓存的 Font（font_name/size 取自当前 theme）。失效则重建。
-    Gdiplus::Font* GetCachedFont(float dpi);
+    // 主题支持三档字号（font_size / index_font_size / code_font_size），按物理像素字号取缓存。
+    // 仅在 (font_name, pixel_size, dpi) 变化时重建。
+    struct FontCache {
+        std::unique_ptr<Gdiplus::FontFamily> family;
+        std::unique_ptr<Gdiplus::Font> font;
+        std::string name;        // 已映射后的物理字体名（"system"→"Microsoft YaHei"）
+        float pixelSize = 0;
+        float dpi = 0;
+        bool matches(const std::string& n, float ps, float d) const {
+            return font && name == n && pixelSize == ps && dpi == d;
+        }
+    };
+    FontCache textFont_, indexFont_, codeFont_;
+    // 按 (物理字体名, 物理像素字号, dpi) 取缓存 Font，未命中则重建。
+    // which: 0=text(font_size) 1=index(index_font_size) 2=code(code_font_size)
+    Gdiplus::Font* GetCachedFont(int which, float dpi);
 
     std::function<void(const fire::Candidate&)> onSelect_;
     std::function<void(int)> onPage_;
@@ -88,8 +98,10 @@ private:
     void PaintToGraphics(Gdiplus::Graphics& g, const SIZE& sz);  // 在离屏 Graphics 上绘制内容
     SIZE Measure();               // 依据 view_ 计算窗口尺寸
     POINT ComputePosition(const SIZE& sz);  // 依据 caret 计算窗口左上角
-    int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中，-2 命中菜单图标
+    int HitTest(POINT pt) const;      // 返回候选索引，-1 未命中，-2 命中菜单图标，-3/-4 命中上下翻页
     void LaunchConfigTool();          // 启动 fire_config.exe
+    // 解析当前应当使用的深色模式：按 theme.dark_mode_preference，跟随系统时读注册表。
+    bool ResolveDarkMode() const;
 
     // 仅创建窗口（CreateWindowExW），owner 作为 hWndParent 传入；GDI+/RegisterClass 由
     // Create() 一次性完成，本方法只复用已注册的类。供 Create 与 Reparent(销毁重建) 共用。

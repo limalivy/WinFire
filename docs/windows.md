@@ -63,13 +63,22 @@
 ## 2. 候选窗（Win32 + GDI+ 自绘，windows/candidate_window/）
 - 无焦点浮窗：`WS_POPUP`，扩展样式 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，
   `WM_MOUSEACTIVATE` 返回 `MA_NOACTIVATE`。
-- GDI+ 绘制组字区、候选列表（横/竖可切换）、序号、编码、翻页指示；配色取自 `ThemeConfig`。
-  主题**未适配深色模式**（`ThemeConfig.light`/`dark` 默认值相同，`ConfigStore` 不解析主题字段），
-  故 `darkMode_` 固定 `false`、恒用浅色配色，不读注册表主题。
-- 定位：根据 `CaretRect` 放在光标下方，越界时翻转到上方/贴边。
-- **Font 缓存**：`Measure` 与 `PaintToGraphics` 经 `GetCachedFont(dpi)` 共用 `Font`/`FontFamily`，
-  仅在 `(font_name, font_size, dpi)` 变化时重建，避免每次候选刷新构造 GDI+ 字体对象（字体加载较重）。
+- GDI+ 绘制组字区、候选列表（横/竖可切换）、序号、编码、翻页指示（上下箭头）；配色取自 `ThemeConfig`。
+- **主题与深色模式**：配色/字号/内边距/圆角全部来自 `config_.theme.appearance(darkMode_)`。
+  `darkMode_` 由 `ResolveDarkMode()` 解析：`dark_mode_preference`（0=跟随系统 / 1=浅色 / 2=深色）；
+  跟随系统时读注册表 `HKCU\...\Themes\Personalize\AppsUseLightTheme`。主题随 `config.json` 经现有
+  `config_json` IPC 字段下发（详见 `docs/ipc.md`），DLL 不直接读主题文件。
+- **Font 缓存**：`Measure` 与 `PaintToGraphics` 经 `GetCachedFont(which, dpi)` 共用三档字号字体
+  （text=`font_size` / index=`index_font_size` / code=`code_font_size`），仅在 `(font_name, pixel_size, dpi)`
+  变化时重建，避免每次候选刷新构造 GDI+ 字体对象（字体加载较重）。
   `Destroy()` 在 `GdiplusShutdown` 前 reset 缓存，保证释放顺序正确。
+- **v2 渲染增强**：选中项（首个候选）按 `selected_background_color`（非全透）+ `candidate_radius` 画圆角背景；
+  每个候选按 `candidate_padding_*` 包裹；原码区按 `origin_padding_*` 包裹。`enable_liquid_glass`
+  在 Windows 无 `NSVisualEffectView` 等价物，渲染层忽略（保持纯色背景）。
+- **页面指示器**：`list.size()>1 || hasPrev || hasNext` 时绘制上下箭头（大小 = `font_size*0.5`，
+  GDI+ 自绘纯色三角形，等价于业火的 template image 渲染）。横向布局竖排放候选列表右侧，竖向横排放下方。
+  颜色用 `page_indicator_color` / `page_indicator_disabled_color`；不可用方向（!hasPrev/!hasNext）点击忽略。
+- 定位：根据 `CaretRect` 放在光标下方，越界时翻转到上方/贴边。
 - **DPI 自适应**：`Measure` 阶段调用 `GetDpiForWindow` 取系统缩放，所有尺寸/字号按 DPI scale 倍率计算，
   避免 HiDPI 屏下候选窗过小。
 - **候选个数可配置**：3-9，由 `config.candidate_count` 控制。
@@ -95,19 +104,22 @@
   1.0MB（MFC 静态版约 7.4MB）。
 - **坑点**：`PROPSHEETHEADER.dwFlags` 用 `phpage` 数组（已 `CreatePropertySheetPage` 创建的句柄）时
   **不能**带 `PSH_PROPSHEETPAGE`（该标志表示用 `ppsp` 结构数组，会让 PropertySheet 把 `phpage` 当指针解引用导致 0xC0000005）。
-- 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理。
+- 属性页 / Tab：输入设置、标点与中英文、按应用模式、输入统计、词库管理、主题。
   - 输入设置：词组/动态调频/反查/显示编码/五笔编码提示/唯一候选自动上屏/候选个数/编码方案/候选方向/顶字/中英切换键。
   - 标点与中英文：标点模式（中文 / 英文）、中英切换键。
   - 按应用模式：`keep_app_input_mode`、模式提示时机、应用固定输入模式列表（增删）。
   - 输入统计：统计开关、累计字数、不同词条数、字词频列表、清除/仅清字词频/导出 CSV。
   - **词库管理**：导入码表（选择 `wb_table.txt` / `wb_98_table.txt` / `py_table.txt`）、
     重建词库（调用 `tablebuilder` 生成 `wb_py_dict.sqlite`）、编辑用户词库（`user-dict.txt`）。
+  - **主题**：列出 `%APPDATA%\WinFire\themes\*.json` 主题库（与业火主题格式兼容，v1+v2）；
+    选择应用 / 导入业火主题文件 / 导出当前主题 / 删除（默认主题禁删）；深色模式偏好
+    （跟随系统 / 浅色 / 深色）。活动主题内联在 `config.json` 的 `theme` 段（唯一真相源），
+    经现有 `config_json` IPC 下发，DLL 不读主题文件。
 - **config 经 IPC（不直接读写 config.json）**：打开走 `IpcGetConfig`（拉 dictd 全量 config +
   数据文件路径），保存走 `IpcSetConfig`（委托 dictd 原子写 + 热重载）。DictPage 重建词库后立即
   `IpcSetConfig(reinit_dict=true)`，编辑 user-dict 后 OK 时带 `reload_user_dict=true`。dictd 不可用
   时降级 `ConfigStore::Load/Save` 直读写（兜底）。调用 `tablebuilder` 生成 `wb_py_dict.sqlite`；
   user-dict.txt 直接读写文件（路径从 GetConfig 响应取）。详见 [ipc.md](./ipc.md)。
-- 注：主题设置、CLI 暂未实现。
 
 ## 4. 图标资源（resources/icons/）
 单一图标源 `winfire_icon.svg`（128×128 母版）经 `render_winfire_icons.py`（依赖 Pillow + numpy）
