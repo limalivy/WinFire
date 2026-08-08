@@ -151,7 +151,9 @@ bool NamedPipeClient::ReadFrameOverlapped(fire::ipc::FrameHeader& hdr,
         total += read;
         if (ok) break;
         if (err == ERROR_MORE_DATA) {
-            buf.resize(buf.size() * 2);
+            // 设上限防止恶意/畸形帧触发无限倍增导致 OOM（纵深防御）。
+            if (buf.size() >= fire::ipc::kMaxFrameLen) return false;
+            buf.resize((std::min)(buf.size() * 2, fire::ipc::kMaxFrameLen));
             continue;
         }
         return false;

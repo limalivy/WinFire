@@ -9,6 +9,7 @@
 #include "../config/ConfigStore.h"
 
 #include <shlobj.h>
+#include <new>
 #include <string>
 
 namespace firewin {
@@ -674,7 +675,13 @@ void CFireTextService::RunInEditSession(std::function<void()> action) {
         return;
     }
 
-    ActionEditSession* session = new ActionEditSession(this, ctx, std::move(action));
+    // nothrow：OOM 时放弃本次动作（候选窗点击/翻页），不抛 std::bad_alloc。
+    ActionEditSession* session = new (std::nothrow) ActionEditSession(this, ctx, std::move(action));
+    if (!session) {
+        FIRE_LOG(L"[WinFire] RunInEditSession: OOM, abort\n");
+        FIRE_LOG_EXIT();
+        return;
+    }
     HRESULT hrSession = S_OK;
     HRESULT hr = ctx->RequestEditSession(clientId_, session, TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
     FIRE_LOG_HR(hr, L"RequestEditSession(ActionEditSession)");
@@ -688,7 +695,13 @@ bool CFireTextService::ProcessKeyInEditSession(ITfContext* pic, const fire::KeyE
         FIRE_LOG(L"[WinFire] ProcessKeyInEditSession: pic is null, returning false\n");
         return false;
     }
-    KeyEditSession* session = new KeyEditSession(this, pic, ev);
+    // nothrow：OOM 时透传该键，避免 std::bad_alloc 跨 COM 边界未捕获导致 UB。
+    KeyEditSession* session = new (std::nothrow) KeyEditSession(this, pic, ev);
+    if (!session) {
+        FIRE_LOG(L"[WinFire] ProcessKeyInEditSession: OOM, returning false\n");
+        FIRE_LOG_EXIT();
+        return false;
+    }
     HRESULT hrSession = S_OK;
     // TF_ES_SYNC 要求同步执行；读写权限用 TF_ES_READWRITE
     HRESULT hr = pic->RequestEditSession(clientId_, session,

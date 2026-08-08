@@ -28,6 +28,12 @@ constexpr uint32_t kMagic = 0x57464452;   // "WFDR"（小端存储）
 constexpr uint16_t kProtocolVersion = 1;
 constexpr size_t   kHeaderSize = 16;
 
+// 单条消息的帧大小上限（头 + payload）。本输入法的业务消息远低于此量级
+//（候选列表、config_json 等最多数十 KB）；设此上限用于读取循环的纵深防御，
+// 防止恶意/畸形帧触发缓冲无限倍增（ERROR_MORE_DATA 扩容循环）导致 OOM。
+// 实际 payload_len 受 ReadFile 实际读到的字节数双重约束。
+constexpr size_t kMaxFrameLen = 16 * 1024 * 1024;  // 16 MB
+
 enum class MsgType : uint16_t {
     Hello              = 0x01,
     QueryCandidates    = 0x02,

@@ -615,6 +615,12 @@ void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
         return;
     }
     HDC memDC = CreateCompatibleDC(screenDC);
+    if (!memDC) {
+        FIRE_LOG(L"[WinFire] Render: CreateCompatibleDC FAILED err=%lu\n", GetLastError());
+        ReleaseDC(nullptr, screenDC);
+        FIRE_LOG_EXIT();
+        return;
+    }
 
     BITMAPINFO bmi = {0};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -626,6 +632,14 @@ void CandidateWindowController::Render(const POINT& pos, const SIZE& sz) {
 
     void* bits = nullptr;
     HBITMAP hBmp = CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!hBmp) {
+        // 极端低内存或尺寸非法：跳过本次绘制，避免在无效 DC/bitmap 上操作。
+        FIRE_LOG(L"[WinFire] Render: CreateDIBSection FAILED err=%lu\n", GetLastError());
+        DeleteDC(memDC);
+        ReleaseDC(nullptr, screenDC);
+        FIRE_LOG_EXIT();
+        return;
+    }
     HGDIOBJ oldBmp = SelectObject(memDC, hBmp);
 
     {

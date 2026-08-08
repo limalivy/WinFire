@@ -6,6 +6,7 @@
 #include <ctffunc.h>
 #include <atlbase.h>
 #include <atlcom.h>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -60,7 +61,9 @@ private:
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     FIRE_LOG(L"[WinFire] DllGetClassObject [tid=%lu]\n", GetCurrentThreadId());
     if (rclsid == CLSID_FireTextService) {
-        CFireClassFactory* f = new CFireClassFactory();
+        // nothrow：OOM 时返回 null 而非抛 std::bad_alloc（跨 COM 边界未捕获会 UB）。
+        CFireClassFactory* f = new (std::nothrow) CFireClassFactory();
+        if (!f) return E_OUTOFMEMORY;
         HRESULT hr = f->QueryInterface(riid, ppv);
         f->Release();
         return hr;

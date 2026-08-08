@@ -115,6 +115,9 @@ void DictIpcProxy::ValidateCache() {
     }
     // config 部分：token 变化时 dictd 回传全量 config_json，交给回调原地填 config_。
     // 不变则 config_json 为空，跳过（省一次序列化）。
+    // 线程约束：本回调在调用 ValidateCache 的线程上执行（当前始终是 TSF 主线程，
+    // SendRequest 是同步 IPC）。config_ 同时被 InputEngine 读取（同线程），无数据竞争。
+    // 若将来从其他线程调用 ValidateCache，需先把 config_ 改为线程安全访问。
     if (!resp.config_json.empty() && on_config_updated_) {
         on_config_updated_(resp.config_json);
         FIRE_LOG(L"[WinFire] ValidateCache: config updated (token %llu -> %llu)\n",

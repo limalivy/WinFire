@@ -26,7 +26,11 @@ bool decode_header(const uint8_t* data, size_t len, FrameHeader& out) {
     out.request_id = r.get_u32();
     out.payload_len = r.get_u32();
     if (!r.ok()) return false;
-    return out.magic == kMagic;
+    if (out.magic != kMagic) return false;
+    // 拒绝畸形巨型 payload：头里声明超过 kMaxFrameLen 的长度直接判失败，
+    // 避免后续读取循环按此值扩容缓冲（纵深防御，配合 kMaxFrameLen 双重约束）。
+    if (out.payload_len > kMaxFrameLen) return false;
+    return true;
 }
 
 std::vector<uint8_t> build_frame(MsgType type, uint32_t request_id,

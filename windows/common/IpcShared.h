@@ -12,6 +12,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -75,7 +76,10 @@ inline bool ReadPipeFrameBlocking(HANDLE pipe, fire::ipc::FrameHeader& hdr,
         DWORD err = GetLastError();
         if (err == ERROR_MORE_DATA) {
             // 同一条消息尚未读完：扩容后继续读剩余部分。
-            buf.resize(buf.size() * 2);
+            // 设上限防止恶意/畸形帧触发无限倍增导致 OOM（纵深防御，配合 decode_header
+            // 对 payload_len 的上限校验双重约束）。
+            if (buf.size() >= fire::ipc::kMaxFrameLen) return false;
+            buf.resize((std::min)(buf.size() * 2, fire::ipc::kMaxFrameLen));
             continue;
         }
         return false;  // ERROR_BROKEN_PIPE 等

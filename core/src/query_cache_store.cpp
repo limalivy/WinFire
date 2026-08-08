@@ -125,6 +125,14 @@ bool get_candidate(Cursor& cur, Candidate& out) {
 
 }  // namespace
 
+// 进程内串行化快照文件（path/path+".tmp"）的写与删。
+// daemon 侧 SaveCacheAsync 的 detached 子线程写文件，可能与同一进程中
+// clear_query_cache→Remove 并发操作同一 path：Save 正在写 .tmp / rename 时，
+// Remove 删掉目标或 .tmp 会留下半写文件或丢全部积累。缓存可容忍丢少量最新数据，
+// 但不可整体损坏，故 Save/Remove 共用此锁互斥。跨进程并发（多 fire_dictd 实例）
+// 由 daemon 单实例 mutex 保证不会出现，无需文件锁。
+std::mutex g_cache_file_mu;
+
 uint32_t ConfigDigest(int code_mode, int candidate_count, bool enable_word_input) {
     // FNV-1a 32bit over 字节拼接。
     uint32_t h = 2166136261u;
@@ -193,13 +201,8 @@ std::optional<CacheStoreSnapshot> Load(const std::string& path) {
 }
 
 void Save(const std::string& path, const CacheStoreSnapshot& snap) {
-    // 进程内串行化写盘：daemon 侧 SaveCacheAsync 的 detached 子线程可能与
-    // ~DictManager 的 SaveCacheStore 并发写同一 path（两者都用 path+".tmp"）。
-    // 不加锁会互相截断 .tmp、或一个 rename 时另一个正 remove 目标，留下半写文件
-    // 或丢全部积累。文件缓存可容忍丢少量最新数据，但不可整体损坏，故此处加进程内锁。
-    // 跨进程并发（多 fire_dictd 实例）由 daemon 单实例 mutex 保证不会出现，无需文件锁。
-    static std::mutex save_mu;
-    std::lock_guard<std::mutex> lock(save_mu);
+    // 串行化快照文件的写与删（g_cache_file_mu 也被 Remove 获取，详见其定义处注释）。
+    std::lock_guard<std::mutex> lock(g_cache_file_mu);
 
     std::string buf;
     buf.append("WFCQ", 4);
@@ -236,6 +239,8 @@ void Save(const std::string& path, const CacheStoreSnapshot& snap) {
 }
 
 void Remove(const std::string& path) {
+    // 与 Save 互斥：防止 Save 正在写 .tmp / rename 时被删除，留下半写文件。
+    std::lock_guard<std::mutex> lock(g_cache_file_mu);
     std::error_code ec;
     std::filesystem::remove(std::filesystem::u8path(path), ec);
     // 顺手清可能残留的 .tmp。
